@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qonaq"
+version = "0.1.0"
+description = "Qonaq Vision — видеоаналитика зала ресторана/клиники поверх существующих камер"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "opencv-python",
+    "supervision>=0.22,<0.27",  # в 0.27+ ByteTrack вынесен из пакета
+    "pydantic>=2.5",
+    "pyyaml",
+    "pillow",
+    "fastapi",
+    "uvicorn",
+    "httpx",
+    "python-dotenv",
+    "imageio-ffmpeg",
+    "onnxruntime",
+]
+
+[project.optional-dependencies]
+# Ultralytics — AGPL-3.0. Используется только через адаптер qonaq/detect/ultra.py (см. DECISIONS.md).
+yolo = ["ultralytics>=8.3"]
+dev = ["pytest", "ruff"]
+
+[project.scripts]
+qonaq = "qonaq.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["qonaq*"]
+
+[tool.setuptools.package-data]
+qonaq = ["api/static/*"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["B008", "E741"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/fetch_videos.py" = ["E501"]

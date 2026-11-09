@@ -13,3 +13,8 @@ runs/
 *.sqlite
 .pytest_cache/
 .ruff_cache/
+*.mov
+*.webm
+*.egg-info/
+build/
+dist/

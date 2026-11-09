@@ -3,8 +3,8 @@
 Видео не наши: только для внутреннего тестирования, не публиковать и не коммитить.
 Запуск: python scripts/fetch_videos.py
 """
-from pathlib import Path
 import urllib.request
+from pathlib import Path
 
 RAW = "https://raw.githubusercontent.com/"
 VIDEOS = {
