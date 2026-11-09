@@ -31,6 +31,7 @@ class RoleDecision:
     standing: bool
     dwell_s: float
     reasons: tuple[str, ...] = ()
+    stable_id: int = 0  # id, переживающий смену id трекером (наследуется от потерянного трека рядом)
 
 
 @dataclass
@@ -47,6 +48,7 @@ class _TrackState:
     votes: deque = field(default_factory=deque)  # (ts, role)
     role: str = UNKNOWN
     confidence: float = 0.0
+    stable_id: int = 0
 
     @property
     def center(self) -> tuple[float, float]:
@@ -99,7 +101,8 @@ class RoleTracker:
         for p in people:
             st = self._tracks.get(p.track_id)
             if st is None:
-                st = self._inherit(p, ts, present) or _TrackState(first_ts=ts, last_ts=ts, xyxy=p.xyxy)
+                st = self._inherit(p, ts, present) or _TrackState(first_ts=ts, last_ts=ts, xyxy=p.xyxy,
+                                                                   stable_id=p.track_id)
                 self._tracks[p.track_id] = st
             st.last_ts, st.xyxy = ts, p.xyxy
             # --- зона-стол с допуском на кратковременный выход
@@ -175,7 +178,7 @@ class RoleTracker:
                 st.role = top
         confs = [v[2] for v in st.votes if v[1] == st.role]
         st.confidence = float(np.mean(confs)) if confs else 0.3
-        return RoleDecision(st.role, round(st.confidence, 2), standing, round(dwell, 1), reasons)
+        return RoleDecision(st.role, round(st.confidence, 2), standing, round(dwell, 1), reasons, st.stable_id)
 
     def tables_visited(self, track_id: int, ts: float) -> int:
         st = self._tracks.get(track_id)

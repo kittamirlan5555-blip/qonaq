@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Qonaq Vision — зал сейчас</title>
+<style>
+:root{--bg:#f4f5f7;--card:#fff;--ink:#16181d;--mut:#667085;--line:#e4e7ec;
+  --free:#16a34a;--wait:#d97706;--served:#2563eb;--dirty:#ea580c;--bad:#dc2626;--other:#7c3aed}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1014;--card:#171a20;--ink:#eceef2;--mut:#98a2b3;--line:#2a2f38;
+  --free:#4ade80;--wait:#fbbf24;--served:#60a5fa;--dirty:#fb923c;--bad:#f87171;--other:#c4b5fd}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
+header{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 16px;padding:14px 16px;border-bottom:1px solid var(--line);background:var(--card)}
+header h1{font-size:19px;margin:0}
+header .site{color:var(--mut)}
+header .status{margin-left:auto;color:var(--mut);font-size:13px;font-variant-numeric:tabular-nums}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--free);margin-right:6px}
+.dot.off{background:var(--bad)}
+main{max-width:1500px;margin:0 auto;padding:16px;display:grid;gap:16px;grid-template-columns:minmax(0,1fr) 340px}
+@media (max-width:1000px){main{grid-template-columns:minmax(0,1fr)}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.card h2{font-size:15px;margin:0;padding:12px 14px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:8px}
+.card h2 span{color:var(--mut);font-weight:400;font-variant-numeric:tabular-nums}
+.cam img{display:block;width:100%;background:#000;min-height:120px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line)}
+.chip{flex:1 1 90px;border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+.chip b{display:block;font-size:22px;line-height:1.1;font-variant-numeric:tabular-nums}
+.chip small{color:var(--mut)}
+.scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+td,th{padding:8px 14px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+th{color:var(--mut);font-weight:600;font-size:13px}
+tr:last-child td{border-bottom:0}
+td.t{text-align:right}
+.s{font-weight:600}
+.FREE{color:var(--free)}.SEATED_WAITING{color:var(--wait)}.SERVED{color:var(--served)}.NEEDS_CLEANING{color:var(--dirty)}
+.other{color:var(--other)}
+tr.alert td{background:color-mix(in srgb,var(--bad) 12%,transparent)}
+tr.alert .s{color:var(--bad)}
+.feed{list-style:none;margin:0;padding:0;max-height:60vh;overflow:auto}
+.feed li{padding:10px 14px;border-bottom:1px solid var(--line)}
+.feed li small{display:block;color:var(--mut)}
+.empty{padding:16px 14px;color:var(--mut)}
+.stack{display:grid;gap:16px;align-content:start}
+.err{padding:10px 14px;color:var(--bad)}
+</style>
+</head>
+<body>
+<header>
+  <h1>Qonaq Vision</h1><span class="site" id="site"></span>
+  <span class="status" id="status"><span class="dot off"></span>подключение…</span>
+</header>
+<main>
+  <div class="stack" id="cams"></div>
+  <div class="stack">
+    <div class="card"><h2>Алерты <span id="tg"></span></h2><ul class="feed" id="feed"><li class="empty">Пока спокойно</li></ul></div>
+    <div class="card"><h2>Последние события</h2><ul class="feed" id="events"><li class="empty">Событий пока нет</li></ul></div>
+  </div>
+</main>
+<script>
+const STATE = {FREE:"Свободен", SEATED_WAITING:"Ждут официанта", SERVED:"Обслуживаются", NEEDS_CLEANING:"Не убран",
+  QUEUE:"Есть люди", EMPTY:"Пусто", WAITING:"Ожидают", ATTENDED:"Сотрудник на месте", UNATTENDED:"Нет сотрудника"};
+const EVENT = {seated:"гости сели", served:"подошёл официант", staff_visit:"визит персонала", left:"гости ушли",
+  cleaned:"стол убран", walkout_before_service:"ушли, не дождавшись", seated_at_dirty_table:"сели за неубранный стол",
+  alert:"алерт", wait_start:"начал ждать", wait_end:"закончил ждать", service_start:"подошёл к стойке",
+  service_end:"отошёл от стойки"};
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const mmss = s => { s = Math.max(0, Math.floor(s || 0)); return String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0"); };
+const clock = (ts, base) => base === "epoch" ? new Date(ts*1000).toLocaleTimeString("ru-RU") : mmss(ts);
+const built = new Set();
+
+function timer(z){
+  if (z.type !== "table") return z.count != null ? z.count + " чел." : "";
+  if (z.state === "SEATED_WAITING") return mmss(z.wait_s);
+  if (z.state === "SERVED") return mmss(z.session_s);
+  if (z.state === "NEEDS_CLEANING") return mmss(z.dirty_s);
+  return mmss(z.state_s);
+}
+function detail(z){
+  if (z.type === "table"){
+    if (z.state === "SEATED_WAITING" || z.state === "SERVED")
+      return "гостей: " + (z.guests || 1) + (z.visits ? " · подходов: " + z.visits : "") + (z.preexisting ? " · сидели до старта" : "");
+    return "";
+  }
+  if (z.type === "waiting_area") return z.longest_s ? "самый долгий: " + mmss(z.longest_s) : "";
+  if (z.type === "service_point") return z.staffed == null ? "" : (z.staffed ? "сотрудник на месте" : "сотрудника нет");
+  return "";
+}
+function chips(s){
+  if (s.profile === "clinic")
+    return [["Ожидают", s.waiting ?? 0], ["У стойки", s.at_desk ?? 0], ["Людей в кадре", s.people ?? 0]];
+  return [["Загрузка", (s.load_pct ?? 0) + "%"], ["Занято", s.occupied ?? 0], ["Ждут", s.waiting ?? 0],
+          ["Не убрано", s.dirty ?? 0], ["Свободно", s.free ?? 0], ["Очередь", s.queue ?? 0]];
+}
+function renderCam(c, base){
+  if (!built.has(c.camera_id)){
+    built.add(c.camera_id);
+    const d = document.createElement("div");
+    d.className = "card cam"; d.id = "cam-" + c.camera_id;
+    d.innerHTML = `<h2>${esc(c.name)} <span class="ts"></span></h2><img alt="Кадр камеры ${esc(c.name)}" src="/video/${encodeURIComponent(c.camera_id)}">
+      <div class="chips"></div><div class="scroll"><table><thead><tr><th>Зона</th><th>Статус</th><th>Подробно</th><th class="t">Таймер</th></tr></thead><tbody></tbody></table></div>`;
+    $("cams").appendChild(d);
+  }
+  const d = $("cam-" + c.camera_id);
+  d.querySelector(".ts").textContent = clock(c.ts, base);
+  d.querySelector(".chips").innerHTML = chips(c.summary).map(([k, v]) => `<div class="chip"><b>${esc(v)}</b><small>${esc(k)}</small></div>`).join("");
+  d.querySelector("tbody").innerHTML = c.zones.map(z => {
+    const cls = z.type === "table" ? z.state : "other";
+    return `<tr class="${z.alert ? "alert" : ""}"><td><b>${esc(z.zone_id)}</b> ${esc(z.name || "")}</td>
+      <td class="s ${cls}">${esc(STATE[z.state] || z.state || "")}</td><td>${esc(detail(z))}</td><td class="t">${esc(timer(z))}</td></tr>`;
+  }).join("") || `<tr><td colspan="4" class="empty">Зоны не размечены: python -m qonaq zones edit …</td></tr>`;
+}
+function render(s){
+  $("site").textContent = s.site.name;
+  $("status").innerHTML = `<span class="dot ${s.running ? "" : "off"}"></span>${s.running ? "работает" : "остановлено"} · ${s.fps} кадр/с`;
+  $("tg").textContent = s.telegram ? "Telegram включён" + (s.alerts_pending ? " · в очереди " + s.alerts_pending : "") : "Telegram не настроен";
+  s.cameras.forEach(c => renderCam(c, s.time_base));
+  if (s.error) $("cams").insertAdjacentHTML("afterbegin", `<div class="card err">${esc(s.error)}</div>`);
+  $("feed").innerHTML = s.alerts.length ? s.alerts.map(a =>
+    `<li>${esc(a.text)}<small>${clock(a.ts, s.time_base)}${s.telegram ? (a.sent ? " · отправлено" : " · в очереди") : ""}</small></li>`).join("")
+    : `<li class="empty">Пока спокойно</li>`;
+}
+async function loadEvents(base){
+  try{
+    const r = await fetch("/api/events?limit=40"); const ev = (await r.json()).filter(e => EVENT[e.type]);
+    $("events").innerHTML = ev.length ? ev.slice(0, 15).map(e =>
+      `<li><b>${esc(e.zone_id)}</b> — ${esc(EVENT[e.type])}<small>${clock(e.ts, base)}</small></li>`).join("")
+      : `<li class="empty">Событий пока нет</li>`;
+  }catch(e){}
+}
+let base = "video";
+function connect(){
+  const es = new EventSource("/api/stream");
+  es.onmessage = m => { const s = JSON.parse(m.data); base = s.time_base; render(s); };
+  es.onerror = () => { $("status").innerHTML = '<span class="dot off"></span>нет связи, переподключение…'; };
+}
+connect();
+setInterval(() => loadEvents(base), 3000); loadEvents(base);
+</script>
+</body>
+</html>

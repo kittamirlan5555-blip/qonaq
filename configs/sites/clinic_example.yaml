@@ -1,0 +1,35 @@
+# Пример объекта «клиника»: зона ожидания + регистратура. Скопируйте, поправьте адреса и зоны.
+# Пароли — ТОЛЬКО в .env (CAM_USER / CAM_PASS), не в YAML и не в git.
+# Запуск: python -m qonaq live --site configs/sites/clinic_example.yaml
+site_id: clinic_demo
+name: Клиника — холл
+profile: clinic
+process_fps: 3                  # 2–3 кадра/с достаточно; на CPU — 1–2 камеры
+cameras:
+  # Hikvision / HiWatch: канал 1, substream (102). Mainstream — 101, канал 2 substream — 202.
+  - id: hall
+    name: Холл (зона ожидания)
+    source: rtsp://${CAM_USER}:${CAM_PASS}@192.168.1.64:554/Streaming/Channels/102
+    zones: configs/zones/clinic_hall.example.yaml
+  # Dahua / Imou: subtype=1 — substream, subtype=0 — mainstream.
+  # - id: reception
+  #   name: Регистратура
+  #   source: rtsp://${CAM_USER}:${CAM_PASS}@192.168.1.65:554/cam/realmonitor?channel=1&subtype=1
+  #   zones: configs/zones/clinic_reception.yaml
+  # XMeye / iCSee:  rtsp://192.168.1.66:554/user=${CAM_USER}&password=${CAM_PASS}&channel=1&stream=1.sdp?real_stream
+  # Uniview:        rtsp://${CAM_USER}:${CAM_PASS}@192.168.1.67:554/unicast/c1/s1/live   (s0 — mainstream)
+detector:
+  backend: auto
+  onnx_model: yolox_s
+  conf: 0.3
+clinic:
+  enter_min_s: 5                # трек считается ожидающим после 5 с в зоне
+  exit_min_s: 8                 # ушёл, если его нет 8 с
+  handoff_s: 20                 # «ушёл из ожидания -> появился у стойки» в пределах 20 с = дождался
+  service_min_s: 10             # у стойки дольше 10 с = обслуживание
+alerts:
+  desk_unattended_s: 60         # очередь у стойки, а сотрудника нет 60 с
+  long_wait_s: 900              # посетитель ждёт дольше 15 минут
+business:
+  open_hours: "08:00-20:00"
+  timezone: Asia/Almaty

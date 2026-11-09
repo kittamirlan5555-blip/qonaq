@@ -61,7 +61,8 @@ class RestaurantThresholds(_Model):
     # seat_min_s * seat_unknown_factor непрерывного присутствия не-персонала.
     seat_unknown_factor: float = 3.0
     # Стол, занятый с первых секунд потока, считается уже обслуженным (мы не знаем, сколько они ждут).
-    preexisting_grace_s: float = 5.0
+    # 30 с: детектор не всегда видит сидящего с первого кадра (перекрытия), а для потока это мелочь.
+    preexisting_grace_s: float = 30.0
     # Сигнал «стол чистый» по эталону пустого стола (SPEC §9a п.4).
     use_table_appearance: bool = False
     appearance_clean_confirm_s: float = 8.0

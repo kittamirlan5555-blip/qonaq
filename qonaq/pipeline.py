@@ -141,7 +141,7 @@ class CameraRuntime:
             people.append(PersonView(tr.id, tr.xyxy, d.role, d.confidence, zones, d.standing, d.dwell_s))
             for zid in zones:
                 key = d.role if d.role in (GUEST, STAFF) else "unknown"
-                per_zone[zid][key].append(tr.id)
+                per_zone[zid][key].append(d.stable_id or tr.id)  # стабильный id переживает смену id трекером
         dirty = self.appearance.update(frame, ts, [t.xyxy for t in tracks] + [d.xyxy for d in persons_all],
                                        self.engine.snapshot(ts)) if self.appearance else {}
         observations = []

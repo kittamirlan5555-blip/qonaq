@@ -1,0 +1,16 @@
+# Шаблоны RTSP для типичных регистраторов в Казахстане (KZ_REALITIES.md).
+# Проверяйте на месте через VLC (Медиа -> Открыть URL): у прошивок бывают отличия.
+# USER/PASS подставляются из .env: ${CAM_USER}, ${CAM_PASS}. Используем substream — его хватает.
+hikvision_hiwatch:
+  substream: rtsp://${CAM_USER}:${CAM_PASS}@IP:554/Streaming/Channels/102   # канал 1; 202 — канал 2
+  mainstream: rtsp://${CAM_USER}:${CAM_PASS}@IP:554/Streaming/Channels/101
+dahua_imou:
+  substream: rtsp://${CAM_USER}:${CAM_PASS}@IP:554/cam/realmonitor?channel=1&subtype=1
+  mainstream: rtsp://${CAM_USER}:${CAM_PASS}@IP:554/cam/realmonitor?channel=1&subtype=0
+xmeye_icsee:
+  substream: rtsp://IP:554/user=${CAM_USER}&password=${CAM_PASS}&channel=1&stream=1.sdp?real_stream
+uniview:
+  substream: rtsp://${CAM_USER}:${CAM_PASS}@IP:554/unicast/c1/s1/live
+  mainstream: rtsp://${CAM_USER}:${CAM_PASS}@IP:554/unicast/c1/s0/live
+webcam: webcam:0
+phone_ip_webcam: rtsp://IP_ТЕЛЕФОНА:8554/h264_ulaw.sdp   # Android «IP Webcam»; адрес показывает само приложение

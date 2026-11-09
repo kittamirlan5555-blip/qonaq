@@ -1,0 +1,32 @@
+# Демо на вебкамере ноутбука: python -m qonaq live --site configs/sites/demo_webcam.yaml
+# Панель: http://127.0.0.1:8000
+#
+# Пороги СПЕЦИАЛЬНО укорочены, чтобы статусы менялись за секунды, а не минуты.
+# Боевые значения (SPEC §5): seat 15 с, visit 4 с, leave 90 с, clean 10 с, алерт «нет официанта» 180 с.
+site_id: demo_webcam
+name: Демо — вебкамера
+profile: restaurant
+process_fps: 5
+cameras:
+  - id: webcam
+    name: Вебкамера ноутбука
+    source: webcam:0            # другая камера: webcam:1; телефон как IP-камера: rtsp://IP:8554/...
+    zones: configs/zones/demo_webcam.yaml
+detector:
+  backend: auto                 # ultralytics, если установлен; иначе YOLOX через onnxruntime
+  onnx_model: yolox_s
+  conf: 0.35
+thresholds:
+  seat_min_s: 5                 # сел и сидит 5 с -> «ждут официанта»
+  visit_min_s: 3                # второй человек подошёл к столу на 3+ с -> «обслуживаются»
+  visit_max_s: 60
+  leave_min_s: 15               # ушёл из кадра на 15 с -> стол «не убран» (или «ушли, не дождавшись»)
+  clean_min_s: 5                # постоял у пустого стола 5 с и ушёл -> «убран»
+  seat_unknown_factor: 4
+  preexisting_grace_s: 0        # в демо не считаем сидящих на старте «уже обслуженными»
+alerts:
+  no_waiter_s: 30               # алерт через 30 с ожидания
+  dirty_table_s: 45
+  long_service_without_visit_s: 120
+business:
+  avg_check_kzt: 15000

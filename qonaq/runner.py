@@ -39,14 +39,28 @@ def _write_run_meta(run_dir: Path, site: SiteConfig, pipe: Pipeline, stats: Pipe
 
 def process_file(video: str | Path, site: SiteConfig | None = None, out: str | Path | None = None,
                  mode: str = "tracks", blur: bool = True, speed: float = 1.0, max_seconds: float | None = None,
-                 detector=None, write_video: bool = True, snapshots: int = 0, pos=None) -> Path:
+                 detector=None, write_video: bool = True, snapshots: int = 0, pos=None,
+                 zones_path: str | Path | None = None, loops: int = 1) -> Path:
     """Прогон видеофайла: события в events.sqlite + аннотированное видео.
 
     mode='tracks' -> annotated.mp4 (bbox, id, роли); mode='demo' -> demo.mp4 (полигоны + панель).
     """
     video = Path(video)
-    site = site_for_file(video, site)
+    base_given = site is not None and bool(site.cameras)
+    if not base_given:
+        keep = site
+        site = site_for_file(video, site)
+        if keep is not None:  # пороги/детектор из --site без камер тоже учитываются
+            site.site_id = site.name = video.stem
     cam_id = site.cameras[0].id
+    if zones_path:
+        site.cameras[0].zones = str(zones_path)
+    if loops > 1:
+        from qonaq.sources.video import probe
+
+        site.cameras[0].loop = True
+        dur = probe(video).duration_s or 60.0
+        max_seconds = min(max_seconds, dur * loops) if max_seconds else dur * loops - 0.05
     run_dir = run_dir_for(site, cam_id, out)
     db = run_dir / "events.sqlite"
     if db.exists():

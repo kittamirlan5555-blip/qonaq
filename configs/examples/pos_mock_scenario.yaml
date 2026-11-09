@@ -1,0 +1,5 @@
+# Сценарий для MockPOS (pos.adapter: mock, pos.scenario: configs/examples/pos_mock_scenario.yaml).
+# Время — секунды времени сцены. Стол T02 занят, но чека нет -> алерт «занят без чека».
+checks:
+  - {table: T01, opened: 60, closed: 2400, total: 18500}
+  - {table: T03, opened: 300}

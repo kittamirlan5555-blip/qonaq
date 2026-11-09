@@ -1,0 +1,18 @@
+# Пример зон клиники для кадра 704x576 (substream). Замените полигоны своими:
+#   python -m qonaq zones edit <кадр.jpg> --zones configs/zones/clinic_hall.yaml
+camera_id: hall
+frame_size: [704, 576]
+zones:
+- id: W01
+  type: waiting_area
+  name: Зона ожидания
+  polygon: [[40, 260], [420, 240], [440, 560], [20, 560]]
+- id: S01
+  type: service_point
+  name: Регистратура
+  polygon: [[450, 300], [640, 300], [660, 520], [460, 520]]      # где стоят посетители
+  staff_polygon: [[470, 150], [690, 150], [690, 300], [470, 300]]  # где стоит/сидит сотрудник
+- id: X01
+  type: ignore
+  name: Коридор персонала
+  polygon: [[0, 0], [200, 0], [200, 180], [0, 180]]

@@ -69,16 +69,19 @@ def zone_label(zone: Zone, snap: dict[str, Any] | None) -> str:
 
 def draw_zones(img: np.ndarray, zones: ZoneSet, states: dict[str, dict[str, Any]] | None = None,
                no_waiter_s: float = 180.0, fill_alpha: float = 0.28, font: int = 16,
-               labels: bool = True) -> np.ndarray:
+               labels: bool = True, show_ignore: bool = True) -> np.ndarray:
     states = states or {}
     overlay = img.copy()
     colors: dict[str, tuple[int, int, int]] = {}
+    if not show_ignore:
+        zones = zones.model_copy(update={"zones": [z for z in zones.zones if z.type != "ignore"]})
     for z in zones.zones:
         snap = states.get(z.id)
         color = state_color(snap, no_waiter_s) if snap and z.type == "table" else TYPE_COLOR[z.type]
         colors[z.id] = color
         pts = np.array(z.polygon, dtype=np.int32)
-        cv2.fillPoly(overlay, [pts], color)
+        if z.type != "ignore":
+            cv2.fillPoly(overlay, [pts], color)
         if z.staff_polygon:
             cv2.polylines(img, [np.array(z.staff_polygon, dtype=np.int32)], True, color, 1, cv2.LINE_AA)
     cv2.addWeighted(overlay, fill_alpha, img, 1 - fill_alpha, 0, dst=img)
@@ -86,12 +89,24 @@ def draw_zones(img: np.ndarray, zones: ZoneSet, states: dict[str, dict[str, Any]
         pts = np.array(z.polygon, dtype=np.int32)
         cv2.polylines(img, [pts], True, colors[z.id], 2, cv2.LINE_AA)
     if labels:
-        for z in zones.zones:
-            x1, y1, x2, _ = z.bbox()
+        placed: list[tuple[int, int, int, int]] = []
+        H, W = img.shape[:2]
+        for z in sorted(zones.zones, key=lambda z: z.bbox()[1]):
+            x1, y1, x2, y2 = z.bbox()
             label = zone_label(z, states.get(z.id))
             w, h = text_size(label, font, bold=True)
-            put_text(img, label, (int((x1 + x2) / 2 - w / 2), int(y1 - h - 6)), font, WHITE, bold=True,
-                     bg=_mix(colors[z.id], DARK, 0.35), bg_alpha=0.85)
+            x = int(min(max((x1 + x2) / 2 - w / 2, 6), W - w - 6))
+            # кандидаты: над зоной, внутри сверху, под зоной, затем ступеньками ниже — первая без наложений
+            cands = [int(y1 - h - 8), int(y1 + 6), int(y2 + 6)] + [int(y1 + 6 + k * (h + 10)) for k in range(1, 6)]
+            y = cands[0]
+            for c in cands:
+                c = min(max(c, 6), H - h - 6)
+                box = (x - 5, c - 5, x + w + 5, c + h + 5)
+                if not any(box[0] < p[2] and p[0] < box[2] and box[1] < p[3] and p[1] < box[3] for p in placed):
+                    y = c
+                    break
+            placed.append((x - 5, y - 5, x + w + 5, y + h + 5))
+            put_text(img, label, (x, y), font, WHITE, bold=True, bg=_mix(colors[z.id], DARK, 0.35), bg_alpha=0.85)
     return img
 
 
@@ -169,7 +184,8 @@ class DemoRenderer:
             blur_people(raw, result.blur_boxes, self.site.privacy.blur_top_fraction)
         fw = int(round(raw.shape[1] * s))
         frame = cv2.resize(raw, (fw - fw % 2, self.height), interpolation=cv2.INTER_AREA)
-        draw_zones(frame, self._scaled, result.zone_states, self.site.alerts.no_waiter_s, font=17)
+        draw_zones(frame, self._scaled, result.zone_states, self.site.alerts.no_waiter_s, font=17,
+                   show_ignore=False)
         if self.show_people:
             for p in result.people:
                 x1, y1, x2, y2 = (int(v * s) for v in p.xyxy)

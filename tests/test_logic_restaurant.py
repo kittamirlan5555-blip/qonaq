@@ -11,6 +11,9 @@ W = (50,)  # официант
 
 
 def machine(**th) -> TableMachine:
+    # В тестах «окно старта» короткое (5 с), чтобы сценарии не начинались с 30 секунд пустоты;
+    # значение по умолчанию (30 с) проверяется отдельно в test_preexisting_grace_default.
+    th.setdefault("preexisting_grace_s", 5.0)
     return TableMachine("T01", RestaurantThresholds(**th), AlertThresholds())
 
 
@@ -252,6 +255,16 @@ def test_preexisting_guests_are_assumed_served():
     assert tl.m.state == TableState.SERVED
     assert tl.of("seated")[0].payload["preexisting"] is True
     assert "served" not in tl.types()  # время подхода для них не измеряется
+
+
+def test_preexisting_grace_default():
+    """По умолчанию посадка в первые 30 с потока считается «сидели до старта» (детектор мог опоздать)."""
+    m = TableMachine("T01", RestaurantThresholds(), AlertThresholds())
+    tl = Timeline(m).run(12).run(30, guests=G)
+    assert m.state == TableState.SERVED and tl.of("seated")[0].payload["preexisting"] is True
+    m2 = TableMachine("T01", RestaurantThresholds(), AlertThresholds())
+    tl2 = Timeline(m2).run(40).run(30, guests=G)
+    assert m2.state == TableState.SEATED_WAITING and tl2.of("seated")[0].payload["preexisting"] is False
 
 
 def test_unknown_only_presence_seats_after_fallback():

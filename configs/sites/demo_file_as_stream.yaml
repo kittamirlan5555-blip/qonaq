@@ -1,0 +1,18 @@
+# Live-режим без камеры: видеофайл проигрывается «как поток» в реальном времени и по кругу.
+# python scripts/fetch_videos.py && python -m qonaq live --site configs/sites/demo_file_as_stream.yaml
+site_id: demo_stream
+name: Демо — запись как поток
+profile: restaurant
+process_fps: 3
+cameras:
+  - id: cctv_terrace_cafe
+    name: Веранда (запись)
+    source: data/videos/cctv_terrace_cafe.mov
+    zones: configs/zones/cctv_terrace_cafe.yaml
+    realtime: true
+    loop: true
+detector:
+  onnx_model: yolox_s
+  onnx_tiles: 1
+thresholds:
+  preexisting_grace_s: 30
