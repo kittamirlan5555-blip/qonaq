@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+data/
+runs/
+*.pt
+*.onnx
+*.engine
+*.mp4
+*.avi
+*.mkv
+*.sqlite
+.pytest_cache/
+.ruff_cache/
