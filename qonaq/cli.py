@@ -86,6 +86,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--device")
     p.add_argument("--conf", type=float)
 
+    p = sub.add_parser("eval", help="сравнить события прогона с ручной разметкой (precision/recall)")
+    p.add_argument("run_dir", help="папка прогона (runs/<имя>/)")
+    p.add_argument("--gt", help="YAML разметки (по умолчанию data/gt/<имя прогона>.yaml)")
+    p.add_argument("--tolerance", type=float, default=10.0, help="окно совпадения по времени, с")
+
+    rp = sub.add_parser("roles", help="роли: calibrate — калибровка формы персонала")
+    r = rp.add_subparsers(dest="rcmd", required=True)
+    p = r.add_parser("calibrate", help="кадры с id треков -> список id сотрудников -> профиль формы")
+    p.add_argument("video")
+    p.add_argument("--staff-ids", help="id треков сотрудников через запятую, напр. 3,17,21")
+    p.add_argument("--auto", action="store_true", help="взять треки, побывавшие у >= 3 столов")
+    p.add_argument("--out", default="configs/staff_profile.yaml", help="куда сохранить профиль формы")
+    p.add_argument("--every", type=float, default=2.0, help="как часто сохранять кадр с id, с")
+    p.add_argument("--rerun", action="store_true", help="заново прогнать видео, даже если tracks.json уже есть")
+    _add_common(p)
+
     zp = sub.add_parser("zones", help="зоны: suggest | edit | preview")
     z = zp.add_subparsers(dest="zcmd", required=True)
     p = z.add_parser("suggest", help="авто-предложение столов по детекциям")
@@ -209,6 +225,44 @@ def cmd_live(args) -> int:
     return 0
 
 
+def cmd_eval(args) -> int:
+    from qonaq.evalgt import format_table, run_eval
+
+    run_dir = Path(args.run_dir)
+    gt = Path(args.gt) if args.gt else Path("data") / "gt" / f"{run_dir.name}.yaml"
+    if not gt.exists():
+        alt = Path("tests") / "fixtures" / "gt" / gt.name
+        if not alt.exists():
+            raise SystemExit(f"нет разметки: {gt}")
+        gt = alt
+    res = run_eval(run_dir, gt, args.tolerance)
+    print(f"Разметка: {gt}\nОкно совпадения: ±{args.tolerance:.0f} с\n")
+    print(format_table(res))
+    return 0
+
+
+def cmd_roles(args) -> int:
+    from qonaq.roles.calibrate import build_profile, collect_tracks
+
+    site = _site(args)
+    calib = Path(site.runs_dir) / "calib" / Path(args.video).stem
+    if args.rerun or not (calib / "tracks.json").exists():
+        calib = collect_tracks(args.video, site, every_s=args.every, max_seconds=args.max_seconds)
+        print(f"Кадры с id треков: {calib} (лица размыты). Треки: {calib / 'tracks.json'}")
+    if not args.staff_ids and not args.auto:
+        print("Теперь посмотрите кадры и запустите:")
+        print(f"  python -m qonaq roles calibrate {args.video} --staff-ids ID1,ID2,...")
+        return 0
+    ids = [int(x) for x in args.staff_ids.split(",") if x.strip()] if args.staff_ids else []
+    try:
+        profile, used = build_profile(calib, ids, auto=args.auto, threshold=site.roles.uniform_threshold)
+    except ValueError as e:
+        raise SystemExit(str(e)) from e
+    out = profile.save(args.out)
+    print(f"Профиль формы по трекам {used}: {out}\nПодключить: в YAML объекта  roles: {{staff_profile: {out}}}")
+    return 0
+
+
 def _grab_frame(source: str, at_s: float = 1.0):
     import cv2
 
@@ -287,6 +341,8 @@ HANDLERS = {
     "demo": cmd_demo,
     "report": cmd_report,
     "live": cmd_live,
+    "eval": cmd_eval,
+    "roles": cmd_roles,
     "doctor": cmd_doctor,
     "run-file": cmd_run_file,
 }
