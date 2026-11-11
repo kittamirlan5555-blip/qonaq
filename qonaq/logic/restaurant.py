@@ -54,6 +54,10 @@ class _Session:
     max_guests: int = 0
     low_confidence: bool = False
     uses_any: bool = False
+    # Фильтр присутствия ГОСТЕЙ хотя бы раз включался за эту сессию. Пока нет — занятость считаем
+    # по фильтру «гости + неизвестные»: сразу после посадки фильтр гостей ещё не прогрет, и его
+    # отметка «пусто с…» относится к времени ДО сессии (старт потока или уход прошлых гостей).
+    guest_confirmed: bool = False
     alerts: set[str] = field(default_factory=set)
 
 
@@ -107,7 +111,22 @@ class TableMachine:
 
     def _occupancy(self) -> PresenceFilter:
         s = self._session
-        return self._any if (s is not None and s.uses_any) else self._guest
+        if s is not None and (s.uses_any or not s.guest_confirmed):
+            return self._any
+        return self._guest
+
+    def _absent_since(self, ts: float) -> float | None:
+        """С какого момента гостей нет за столом в текущей сессии; None — гости на месте.
+
+        Отсутствие не может начаться раньше самой посадки: отметки фильтров, сделанные до сессии,
+        к ней не относятся (иначе «ушли» срабатывает мгновенно, с отрицательной длительностью).
+        """
+        s = self._session
+        occ = self._occupancy()
+        if occ.state:
+            return None
+        since = occ.since if occ.since is not None else ts
+        return max(since, s.seated_ts) if s is not None else since
 
     # ------------------------------------------------------------------ main
     def update(self, obs: ZoneObservation) -> list[Event]:
@@ -124,6 +143,8 @@ class TableMachine:
         self._guest.update(ts, bool(guests))
         if self._session is not None:
             self._session.max_guests = max(self._session.max_guests, len(guests))
+            if self._guest.state:
+                self._session.guest_confirmed = True
 
         # Кандидаты в «визит персонала» среди неизвестных — только стоящие (если признак доступен).
         visitors = unknown if obs.standing_tracks is None else unknown & set(obs.standing_tracks)
@@ -241,13 +262,14 @@ class TableMachine:
             return False
         seated_ts = self._any.since if self._any.since is not None else ts
         seated_ts = max(seated_ts, self._left_ts if (dirty and self._left_ts is not None) else self.state_since)
-        preexisting = (not dirty) and self._first_ts is not None and (
+        # preexisting_grace_s: 0 выключает правило «сидели до старта» совсем (демо-конфиги).
+        preexisting = (not dirty) and th.preexisting_grace_s > 0 and self._first_ts is not None and (
             seated_ts - self._first_ts <= th.preexisting_grace_s
         )
         self._sid += 1
         self._session = _Session(sid=self._sid, seated_ts=seated_ts, preexisting=preexisting,
                                  dirty_seat=dirty, uses_any=not by_role, low_confidence=not by_role,
-                                 max_guests=self._n_guest)
+                                 max_guests=self._n_guest, guest_confirmed=self._guest.state)
         self._episode = None
         self._absent_visits = []
         self._clean_since = None
@@ -272,8 +294,8 @@ class TableMachine:
         s = self._session
         assert s is not None
         occ = self._occupancy()
-        if not occ.state and occ.duration(ts) >= self.th.leave_min_s:
-            left_ts = occ.since if occ.since is not None else ts
+        left_ts = self._absent_since(ts)
+        if left_ts is not None and ts - left_ts >= self.th.leave_min_s:
             out.append(self._ev(left_ts, "walkout_before_service", waited_s=round(left_ts - s.seated_ts, 1)))
             self._set_state(TableState.FREE, left_ts, out)
             self._session = None
@@ -302,9 +324,9 @@ class TableMachine:
                 out.append(self._ev(ts, "alert", kind="long_service_without_visit",
                                     since_visit_s=round(ts - last, 1)))
             return
-        if occ.duration(ts) < self.th.leave_min_s:
+        left_ts = self._absent_since(ts)
+        if left_ts is None or ts - left_ts < self.th.leave_min_s:
             return
-        left_ts = occ.since if occ.since is not None else ts
         out.append(self._ev(left_ts, "left", visit_duration_s=round(left_ts - s.seated_ts, 1),
                             staff_visits=s.visits, preexisting=s.preexisting))
         self._left_ts = left_ts

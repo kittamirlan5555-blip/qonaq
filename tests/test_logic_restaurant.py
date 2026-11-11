@@ -329,3 +329,72 @@ def test_appearance_signal_ignored_when_flag_off():
     tl = seated(Timeline(machine())).run(6, guests=G, staff=W).run(30, guests=G)
     tl.run(120, table_dirty=True).run(30, table_dirty=False)
     assert tl.m.state == TableState.NEEDS_CLEANING
+
+
+# ---------------------------------------------------------------- баг ложных уходов (preexisting_grace_s: 0)
+# В реальном пайплайне человек у стола сначала `unknown` и становится `guest` только через
+# seat_min_s + окно голосования ролей. В этот момент фильтр присутствия ГОСТЕЙ ещё выключен,
+# а его отметка «пусто с…» указывает на старт потока (или на конец прошлой сессии).
+FAST = dict(seat_min_s=5, visit_min_s=3, leave_min_s=12, clean_min_s=5, preexisting_grace_s=0)
+
+
+def test_no_false_walkout_right_after_seating_with_fast_thresholds():
+    """Воспроизведение бага из прогона terrace_fast: «сели → ушли не дождавшись → сели» три раза подряд."""
+    tl = Timeline(machine(**FAST)).run(20)  # стол пуст дольше leave_min_s
+    tl.run(8, unknown=(1,))  # сел; роли ещё не решили, что это гость
+    tl.run(40, guests=(1,))  # роли признали гостем — сидит дальше
+    assert tl.types() == ["seated"]
+    assert tl.m.state == TableState.SEATED_WAITING
+    assert tl.of("seated")[0].ts == pytest.approx(20.0, abs=0.3)
+    assert tl.m.snapshot()["wait_s"] == pytest.approx(48.0, abs=0.5)
+
+
+def test_no_false_walkout_right_after_seating_with_default_thresholds():
+    """Тот же баг был логически возможен и с боевыми порогами — если стол пустовал дольше leave_min_s."""
+    m = TableMachine("T01", RestaurantThresholds(), AlertThresholds())
+    tl = Timeline(m).run(200).run(19, unknown=(1, 2)).run(60, guests=(1, 2))
+    assert tl.types() == ["seated"]
+    assert m.state == TableState.SEATED_WAITING
+
+
+def test_no_false_walkout_for_second_party_at_dirty_table():
+    """Вторая компания за неубранным столом: фильтр гостей выключен с момента ухода первой."""
+    tl = Timeline(machine(**FAST)).run(10).run(10, guests=G).run(5, guests=G, staff=W).run(10, guests=G)
+    tl.run(40)  # ушли, стол не убран
+    assert tl.m.state == TableState.NEEDS_CLEANING
+    tl.run(8, unknown=(5,)).run(30, guests=(5,))
+    assert tl.m.state == TableState.SEATED_WAITING
+    assert "walkout_before_service" not in tl.types()
+    assert len(tl.of("seated")) == 2
+
+
+def test_role_flicker_after_seating_is_not_a_walkout():
+    """Роль на кадр стала `guest` и вернулась в `unknown`, а человек сидит — стол остаётся занятым."""
+    tl = Timeline(machine(**FAST)).run(20).run(8, unknown=(1,)).run(0.4, guests=(1,)).run(60, unknown=(1,))
+    assert tl.types() == ["seated"]
+    assert tl.m.state == TableState.SEATED_WAITING
+
+
+def test_real_walkout_right_after_seating_is_still_detected_once():
+    """Сел, только что признан гостем и сразу ушёл: один уход, с неотрицательным временем ожидания."""
+    tl = Timeline(machine(**FAST)).run(20).run(8, unknown=(1,)).run(2, guests=(1,)).run(40)
+    assert tl.types() == ["seated", "walkout_before_service"]
+    ev = tl.of("walkout_before_service")[0]
+    assert ev.payload["waited_s"] == pytest.approx(10.0, abs=1.0)
+    assert ev.ts == pytest.approx(30.0, abs=1.0)
+    assert tl.m.state == TableState.FREE
+
+
+def test_walkout_wait_is_never_negative():
+    tl = Timeline(machine(**FAST)).run(20)
+    for _ in range(3):
+        tl.run(8, unknown=(1,)).run(3, guests=(1,)).run(30)
+    assert all(e.payload["waited_s"] >= 0 for e in tl.of("walkout_before_service"))
+    assert len(tl.of("walkout_before_service")) == len(tl.of("seated")) == 3
+
+
+def test_grace_zero_means_nobody_is_preexisting():
+    """preexisting_grace_s: 0 — сидящие с первого кадра считаются «только что сели» (демо-конфиги)."""
+    tl = Timeline(machine(**FAST)).run(10, guests=G)
+    assert tl.m.state == TableState.SEATED_WAITING
+    assert tl.of("seated")[0].payload["preexisting"] is False
