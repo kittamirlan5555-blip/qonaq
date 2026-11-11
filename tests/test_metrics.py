@@ -175,3 +175,18 @@ def test_async_writer_does_not_lose_events(tmp_path):
     w.close()
     assert len(store.events()) == 50 and len(seen) == 50
     assert store.events(limit=3, newest_first=True)[0]["payload"]["count"] == 49
+
+
+def test_unserved_long_waits_count_in_share_over_threshold():
+    """Стол, к которому так и не подошли, не должен выпадать из «доли ожиданий дольше порога»."""
+    store = EventStore()
+    run_table(store, "T01", [(20, {}), (60, {"guests": G}), (8, {"guests": G, "staff": W}), (300, {"guests": G})])
+    run_table(store, "T02", [(20, {}), (368, {"guests": G})])  # ждут 368 с и всё ещё ждут
+    run_table(store, "T03", [(20, {}), (200, {"guests": G}), (168, {})])  # ждали 200 с и ушли
+    run_table(store, "T04", [(300, {}), (88, {"guests": G})])  # ждут, но пока меньше порога — не считаем
+    store.set_meta(time_base="video", scene_s=388.0, tables=4)
+    m = compute_metrics(store, SiteConfig())
+    r = m["response"]
+    assert r["n"] == 1 and r["unserved_over_threshold"] == 2
+    assert r["share_over_threshold"] == pytest.approx(2 / 3, abs=0.01)
+    assert m["still_waiting"] == 2 and m["walkouts"]["n"] == 1

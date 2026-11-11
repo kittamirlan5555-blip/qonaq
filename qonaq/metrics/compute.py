@@ -109,13 +109,21 @@ def compute_metrics(store: EventStore, site: SiteConfig | None = None, zones: li
     # ---------------- время до первого подхода
     resp = [s["response_time_s"] for s in measured if s["response_time_s"] is not None]
     response = stats(resp)
-    over_n = sum(1 for r in resp if r > al.no_waiter_s)
-    response["share_over_threshold"] = round(over_n / len(resp), 3) if resp else None
-    response["threshold_s"] = al.no_waiter_s
     served = [s for s in measured if s["served_ts"] is not None]
+    still_waiting = [s for s in measured if s["served_ts"] is None and s["outcome"] == "open"]
+    # Столы, к которым так и не подошли (ждут до сих пор или ушли, не дождавшись), но ждавшие дольше порога,
+    # обязаны попасть в «долю ожиданий дольше порога»: иначе самые плохие случаи выпадают из статистики
+    # (ошибка выжившего) и отчёт показывает «0%» при трёх горящих алертах.
+    unserved_over = [s for s in measured if s["served_ts"] is None and (
+        (s["outcome"] == "open" and t_end - s["seated_ts"] > al.no_waiter_s)
+        or (s["outcome"] == "walkout" and (s["visit_duration_s"] or 0) > al.no_waiter_s))]
+    over_n = sum(1 for r in resp if r > al.no_waiter_s) + len(unserved_over)
+    denom = len(resp) + len(unserved_over)
+    response["share_over_threshold"] = round(over_n / denom, 3) if denom else None
+    response["unserved_over_threshold"] = len(unserved_over)
+    response["threshold_s"] = al.no_waiter_s
     response["low_confidence_share"] = (
         round(sum(1 for s in served if s["low_confidence"]) / len(served), 3) if served else None)
-    still_waiting = [s for s in measured if s["served_ts"] is None and s["outcome"] == "open"]
 
     # ---------------- уход до обслуживания
     walkouts = [s for s in sessions if s["outcome"] == "walkout"]

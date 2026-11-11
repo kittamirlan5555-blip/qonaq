@@ -18,6 +18,7 @@ def _add_common(p: argparse.ArgumentParser) -> None:
     p.add_argument("--device", help="auto | cpu | cuda:0")
     p.add_argument("--conf", type=float, help="порог уверенности детектора")
     p.add_argument("--max-seconds", type=float, help="обработать только первые N секунд")
+    p.add_argument("--det-cache", help="папка кэша детекций (повторные прогоны того же видео — без детектора)")
 
 
 def _site(args) -> SiteConfig:
@@ -38,6 +39,8 @@ def _site(args) -> SiteConfig:
         d.device = args.device
     if getattr(args, "conf", None):
         d.conf = args.conf
+    if getattr(args, "det_cache", None):
+        d.cache_dir = args.det_cache
     return site
 
 

@@ -79,12 +79,25 @@ def create_detector(cfg) -> Detector:
     onnxruntime (Apache-2.0, без PyTorch). Порог детектора — минимальный из conf и blur_conf: неуверенные
     детекции людей нужны для блюра, в трекинг идут только >= conf.
     """
+    import os
+
     conf = min(cfg.conf, cfg.blur_conf)
     backend = cfg.backend
     if backend == "fake":
         return FakeDetector()
     if backend == "auto":
         backend = "ultralytics" if ultralytics_available() else "onnx"
+    cache_dir = getattr(cfg, "cache_dir", None) or os.environ.get("QONAQ_DET_CACHE")
+    if cache_dir:
+        from qonaq.detect.cache import CachingDetector
+
+        model = cfg.model.replace(".", "_") if backend == "ultralytics" else f"{cfg.onnx_model}-t{cfg.onnx_tiles}"
+        key = f"{backend}-{model}-c{conf:.2f}"
+        return CachingDetector(lambda: _create(cfg, backend, conf), cache_dir, key)
+    return _create(cfg, backend, conf)
+
+
+def _create(cfg, backend: str, conf: float) -> Detector:
     if backend == "ultralytics":
         from qonaq.detect.ultra import UltralyticsDetector
 

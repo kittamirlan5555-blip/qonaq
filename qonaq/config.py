@@ -33,6 +33,8 @@ class DetectorConfig(_Model):
     blur_conf: float = Field(0.12, ge=0.01, le=1.0)
     imgsz: int = Field(960, ge=160, le=1920)
     device: str = "auto"  # auto | cpu | cuda | cuda:0 | mps
+    # Кэш детекций на диске (только рамки, без изображений) — для повторных прогонов одного видео при отладке.
+    cache_dir: str | None = None
 
 
 class TrackerConfig(_Model):

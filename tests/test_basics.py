@@ -186,3 +186,27 @@ def test_cli_parser_has_commands():
     ap = build_parser()
     assert ap.parse_args(["doctor", "--no-model"]).cmd == "doctor"
     assert {"doctor", "run-file"} <= set(HANDLERS)
+
+
+def test_detection_cache_roundtrip(tmp_path):
+    """Кэш детекций: второй прогон тех же кадров не вызывает детектор; на диске только рамки."""
+    import numpy as np
+
+    from qonaq.detect.base import Detection, FakeDetector
+    from qonaq.detect.cache import CachingDetector
+
+    script = [[Detection(1, 2, 30, 40, 0.9, "person")], []]
+    frames = [np.full((8, 8, 3), i, np.uint8) for i in range(2)]
+    made = []
+
+    def factory():
+        made.append(1)
+        return FakeDetector(script)
+
+    c1 = CachingDetector(factory, tmp_path, "fake-x")
+    first = c1.detect(frames)
+    assert (c1.hits, c1.misses) == (0, 2) and first[0][0].label == "person" and first[1] == []
+    c2 = CachingDetector(factory, tmp_path, "fake-x")
+    assert c2.detect(frames) == first
+    assert (c2.hits, c2.misses) == (2, 0) and len(made) == 1  # второй детектор даже не создавался
+    assert all(p.suffix == ".jsonl" for p in tmp_path.iterdir())
