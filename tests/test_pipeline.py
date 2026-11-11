@@ -18,7 +18,7 @@ from qonaq.zones.models import Zone, ZoneSet
 
 FPS = 5.0
 GUEST_A, GUEST_B = (120, 120, 180, 210), (230, 120, 290, 210)  # сидят за T01
-WAITER = (175, 60, 225, 230)  # стоит у T01
+WAITER = (175, 60, 225, 230)  # стоит у T01 (h/w = 3.4)
 OTHER = (480, 120, 540, 210)  # гость за T02
 
 

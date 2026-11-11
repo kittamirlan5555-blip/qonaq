@@ -133,7 +133,8 @@ class CameraRuntime:
 
         # --- наблюдения по зонам
         per_zone: dict[str, dict[str, list[int]]] = {
-            z.id: {"guest": [], "staff": [], "unknown": []} for z in self.zones.zones if z.type != "ignore"
+            z.id: {"guest": [], "staff": [], "unknown": [], "standing": []}
+            for z in self.zones.zones if z.type != "ignore"
         }
         people: list[PersonView] = []
         for tr, zones in placed:
@@ -141,7 +142,10 @@ class CameraRuntime:
             people.append(PersonView(tr.id, tr.xyxy, d.role, d.confidence, zones, d.standing, d.dwell_s))
             for zid in zones:
                 key = d.role if d.role in (GUEST, STAFF) else "unknown"
-                per_zone[zid][key].append(d.stable_id or tr.id)  # стабильный id переживает смену id трекером
+                sid = d.stable_id or tr.id  # стабильный id переживает смену id трекером
+                per_zone[zid][key].append(sid)
+                if d.standing:
+                    per_zone[zid]["standing"].append(sid)
         dirty = self.appearance.update(frame, ts, [t.xyxy for t in tracks] + [d.xyxy for d in persons_all],
                                        self.engine.snapshot(ts)) if self.appearance else {}
         observations = []
@@ -155,6 +159,7 @@ class CameraRuntime:
             observations.append(ZoneObservation(
                 ts=ts, zone_id=z.id, guest_tracks=tuple(pz["guest"]), staff_tracks=tuple(pz["staff"]),
                 unknown_tracks=tuple(pz["unknown"]), table_dirty=dirty.get(z.id), staff_behind_desk=behind,
+                standing_tracks=tuple(pz["standing"]) if site.roles.visit_requires_standing else None,
             ))
         events = self.engine.update(observations)
         for e in events:

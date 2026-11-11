@@ -1,0 +1,16 @@
+# Ускоренные пороги ДЛЯ ДЕМОНСТРАЦИИ на коротких записях (60–90 с): за минуту видно весь цикл цветов.
+# НЕ для реальной работы и не для отчётов — боевые пороги в SPEC §5 (15 с / 90 с / 180 с).
+#   python -m qonaq demo data/videos/cctv_terrace_cafe.mov --site configs/sites/demo_fast.yaml --out runs/terrace_fast
+site_id: demo_fast
+name: Демо (ускоренные пороги)
+profile: restaurant
+thresholds:
+  seat_min_s: 5
+  visit_min_s: 3
+  leave_min_s: 12
+  clean_min_s: 5
+  preexisting_grace_s: 0     # сидящие на старте считаются «только что сели» — чтобы показать ожидание
+alerts:
+  no_waiter_s: 40
+  dirty_table_s: 30
+  long_service_without_visit_s: 60

@@ -125,7 +125,9 @@ class TableMachine:
         if self._session is not None:
             self._session.max_guests = max(self._session.max_guests, len(guests))
 
-        self._update_episode(ts, guests, staff, unknown, out)
+        # Кандидаты в «визит персонала» среди неизвестных — только стоящие (если признак доступен).
+        visitors = unknown if obs.standing_tracks is None else unknown & set(obs.standing_tracks)
+        self._update_episode(ts, guests, staff, visitors, out)
 
         if self.state == TableState.FREE:
             self._try_seat(ts, out, dirty=False)

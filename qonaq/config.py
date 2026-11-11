@@ -95,7 +95,9 @@ class RolesConfig(_Model):
     vote_window_s: float = 6.0
     reid_gap_s: float = 4.0  # новый трек рядом с недавно потерянным наследует его историю
     reid_dist: float = 0.6  # в долях диагонали bbox
-    standing_aspect: float = 2.1  # h/w bbox выше — «стоит» (слабый признак)
+    standing_aspect: float = 1.9  # h/w bbox выше — «стоит» (слабый признак)
+    # Визит неизвестного к занятому столу считается визитом персонала, только если он стоит (SPEC §9a п.3).
+    visit_requires_standing: bool = True
     staff_profile: str | None = None  # путь к configs/staff_profile.yaml
     uniform_threshold: float = 0.55
     # Зоны-столы, в которых человек считается персоналом всегда (стойка бара и т.п.) — задаются типом ignore.

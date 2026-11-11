@@ -160,6 +160,15 @@ def test_unknown_standing_visitor_counts_with_low_confidence():
     assert ev.payload["response_time_s"] == pytest.approx(30.0, abs=1.0)  # до начала визита
 
 
+def test_seated_unknown_is_not_a_visit_when_posture_known():
+    """Неизвестный, который СИДИТ у занятого стола (опоздавший гость, смена id), — не визит персонала."""
+    tl = seated(Timeline(machine())).run(10, guests=G)
+    tl.run(8, guests=G, unknown=(9,), standing_tracks=()).run(10, guests=G)
+    assert tl.m.state == TableState.SEATED_WAITING and "served" not in tl.types()
+    tl.run(8, guests=G, unknown=(9,), standing_tracks=(9,)).run(10, guests=G)  # а стоящий — визит
+    assert tl.m.state == TableState.SERVED and tl.of("served")[0].payload["confidence"] == "low"
+
+
 def test_unknown_who_becomes_guest_is_not_a_visit():
     tl = seated(Timeline(machine())).run(10, guests=G, unknown=(9,))  # подсел опоздавший друг
     tl.run(30, guests=(*G, 9))

@@ -19,6 +19,9 @@ class ZoneObservation:
     guest_tracks: tuple[int, ...] = ()
     staff_tracks: tuple[int, ...] = ()
     unknown_tracks: tuple[int, ...] = ()
+    # Кто из людей в зоне стоит (по позе/пропорциям bbox). None — признак недоступен.
+    # SPEC §9a п.3: без калибровки формы визитом персонала считается только визит СТОЯЩЕГО неизвестного.
+    standing_tracks: tuple[int, ...] | None = None
     # Сигнал по эталону пустого стола: True — на столе что-то есть, False — стол как эталон, None — нет данных.
     table_dirty: bool | None = None
     # service_point: сотрудник за стойкой (clinic).
