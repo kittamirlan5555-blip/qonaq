@@ -2,7 +2,8 @@
 
 Запуск:  python scripts/run_all.py            (качество: yolox_m + плитки, 4 кадр/с — медленно на CPU)
          python scripts/run_all.py --fast     (yolox_s, 5 кадр/с)
-Результаты: runs/<имя видео>/{demo.mp4, events.sqlite, report.html, report.md, telegram.txt, eval.md}
+Результаты: runs/<имя видео>/{demo.mp4, events.sqlite, report.html, report.md, telegram.txt, eval.md, health.json}
+Синтетика (data/videos/synth_*) здесь не гоняется — для неё `python -m qonaq synth`.
 """
 from __future__ import annotations
 
@@ -27,7 +28,9 @@ def main() -> int:
     args = ap.parse_args()
     model = ["--model", "yolox_s", "--tiles", "1", "--fps", "5"] if args.fast else \
             ["--model", "yolox_m", "--tiles", "2", "--fps", "4"]
-    videos = sorted(p for p in (ROOT / "data" / "videos").glob("*") if p.suffix.lower() in VIDEO_EXT)
+    # synth_* — свои пороги и разметка: их гоняет `python -m qonaq synth`; staged* — `staged-check`
+    videos = sorted(p for p in (ROOT / "data" / "videos").glob("*") if p.suffix.lower() in VIDEO_EXT
+                    and not p.stem.startswith(("synth_", "staged")))
     if not videos:
         print("нет видео: сначала python scripts/fetch_videos.py")
         return 1
