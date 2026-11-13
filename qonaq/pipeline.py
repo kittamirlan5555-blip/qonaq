@@ -92,6 +92,7 @@ class CameraRuntime:
         self.assigner = ZoneAssigner(self.zones)
         self.engine: Engine = create_engine(self.zones, site, pos=pos)
         self.appearance = None
+        self.table_signals = None
         self.frame_index = 0
         self.last_result: FrameResult | None = None
 
@@ -106,10 +107,16 @@ class CameraRuntime:
             self.zones = scaled
             self.assigner = ZoneAssigner(self.zones)
             self.engine = create_engine(self.zones, self.site, pos=self._pos)
-        if self.site.thresholds.use_table_appearance and self.site.profile == "restaurant":
+        th = self.site.thresholds
+        if th.use_table_appearance and self.site.profile == "restaurant":
             from qonaq.zones.appearance import TableAppearance
 
             self.appearance = TableAppearance(self.zones, (w, h))
+        if (th.use_table_classifier or th.use_dish_detection) and self.site.profile == "restaurant":
+            from qonaq.zones.tablestate import TableSignals, load_table_classifier
+
+            clf = load_table_classifier(th.table_classifier) if th.use_table_classifier else None
+            self.table_signals = TableSignals(self.zones, th, clf)
 
     def _appearance(self, frame: np.ndarray, ts: float, tracks) -> dict[int, float]:
         """p(staff) по внешнему виду — для каждого трека не чаще appearance_every_s, одним батчем."""
@@ -167,6 +174,8 @@ class CameraRuntime:
                     per_zone[zid]["standing"].append(sid)
         dirty = self.appearance.update(frame, ts, [t.xyxy for t in tracks] + [d.xyxy for d in persons_all],
                                        self.engine.snapshot(ts)) if self.appearance else {}
+        people_boxes = [t.xyxy for t in tracks] + [d.xyxy for d in persons_all]
+        tsig = self.table_signals.update(frame, ts, people_boxes, detections) if self.table_signals else {}
         observations = []
         for z in self.zones.zones:
             if z.type == "ignore":
@@ -178,6 +187,7 @@ class CameraRuntime:
             observations.append(ZoneObservation(
                 ts=ts, zone_id=z.id, guest_tracks=tuple(pz["guest"]), staff_tracks=tuple(pz["staff"]),
                 unknown_tracks=tuple(pz["unknown"]), table_dirty=dirty.get(z.id), staff_behind_desk=behind,
+                table_signals=tuple(tsig[z.id]) if z.id in tsig else None,
                 standing_tracks=tuple(pz["standing"]) if site.roles.visit_requires_standing else None,
             ))
         events = self.engine.update(observations)
@@ -218,6 +228,8 @@ class Pipeline:
         if not site.cameras:
             raise ValueError("в конфиге объекта нет ни одной камеры")
         self.site = site
+        if site.thresholds.use_dish_detection:
+            site.detector.dishes = True  # сигнал «посуда на столе» требует классов посуды у детектора
         self.detector = detector or create_detector(site.detector)
         self.store = store
         self.stats = PipelineStats()

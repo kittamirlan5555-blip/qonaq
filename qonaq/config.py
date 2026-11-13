@@ -35,6 +35,8 @@ class DetectorConfig(_Model):
     device: str = "auto"  # auto | cpu | cuda | cuda:0 | mps
     # Кэш детекций на диске (только рамки, без изображений) — для повторных прогонов одного видео при отладке.
     cache_dir: str | None = None
+    # W3: детектировать ещё и посуду (COCO bottle, wine glass, cup, fork, knife, spoon, bowl).
+    dishes: bool = False
 
 
 class TrackerConfig(_Model):
@@ -68,6 +70,16 @@ class RestaurantThresholds(_Model):
     # Сигнал «стол чистый» по эталону пустого стола (SPEC §9a п.4).
     use_table_appearance: bool = False
     appearance_clean_confirm_s: float = 8.0
+    # W3: ещё два независимых сигнала состояния стола + правило согласия (qonaq/logic/tablesignals.py).
+    use_table_classifier: bool = False  # голова clean/dirty/occupied поверх энкодера (models/tables_head.npz)
+    table_classifier: str = "models/tables_head.npz"
+    table_clf_dirty_p: float = 0.6  # p(dirty)/(p(dirty)+p(clean)) выше — «грязный», ниже 1−этого — «чистый»
+    table_clf_every_s: float = 2.0  # как часто классифицировать кроп стола
+    use_dish_detection: bool = False  # посуда детектора (cup/bowl/bottle/...) в зоне стола без людей
+    dish_conf: float = 0.3
+    dish_min_count: int = 1
+    table_clean_min_agree: int = 2  # сколько сигналов должны сказать «чистый» (не больше числа включённых)
+    table_dirty_min_agree: int = 2
 
 
 class AlertThresholds(_Model):

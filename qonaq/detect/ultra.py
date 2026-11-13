@@ -40,7 +40,7 @@ def weights_dir() -> Path:
 
 class UltralyticsDetector:
     def __init__(self, model: str = "yolo11n.pt", fallback_models: Sequence[str] = (), conf: float = 0.25,
-                 imgsz: int = 960, device: str = "auto"):
+                 imgsz: int = 960, device: str = "auto", classes: dict[int, str] | None = None):
         from ultralytics import YOLO
 
         self.device = pick_device(device)
@@ -61,7 +61,8 @@ class UltralyticsDetector:
                 log.warning("модель %s недоступна: %s", name, e)
         if self._model is None:
             raise RuntimeError("не удалось загрузить ни одну модель детекции: " + "; ".join(errors))
-        self._classes = sorted(COCO_IDS)
+        self._names = dict(classes or COCO_IDS)
+        self._classes = sorted(self._names)
 
     def detect(self, frames: Sequence[np.ndarray]) -> list[list[Detection]]:
         if not frames:
@@ -78,7 +79,7 @@ class UltralyticsDetector:
             conf = boxes.conf.cpu().numpy()
             cls = boxes.cls.cpu().numpy().astype(int)
             out.append([
-                Detection(float(b[0]), float(b[1]), float(b[2]), float(b[3]), float(c), COCO_IDS[int(k)])
-                for b, c, k in zip(xyxy, conf, cls, strict=True) if int(k) in COCO_IDS
+                Detection(float(b[0]), float(b[1]), float(b[2]), float(b[3]), float(c), self._names[int(k)])
+                for b, c, k in zip(xyxy, conf, cls, strict=True) if int(k) in self._names
             ])
         return out

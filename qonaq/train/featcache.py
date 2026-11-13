@@ -11,7 +11,7 @@ import numpy as np
 
 from qonaq.datasets.index import load_rows
 from qonaq.roles.encoder import OnnxEncoder, crop_box
-from qonaq.roles.features import hsv_features
+from qonaq.roles.features import hsv_features, table_hsv
 
 log = logging.getLogger("qonaq.train")
 
@@ -78,16 +78,3 @@ def extract(index_csv: Path, encoder: str | None, out_dir: Path, kind: str = "pe
     out_dir.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(cache, **out)
     return out
-
-
-def table_hsv(crop: np.ndarray) -> np.ndarray:
-    """HSV-гистограмма центральной части кропа стола (256 = 16×4×4) + доля «пёстрых» пикселей не нужна —
-    простая гистограмма как база сравнения."""
-    h, w = crop.shape[:2]
-    c = crop[int(0.1 * h):int(0.9 * h), int(0.1 * w):int(0.9 * w)]
-    if c.size == 0:
-        c = crop
-    hsv = cv2.cvtColor(c, cv2.COLOR_BGR2HSV)
-    hist = cv2.calcHist([hsv], [0, 1, 2], None, [16, 4, 4], [0, 180, 0, 256, 0, 256]).ravel()
-    s = float(hist.sum())
-    return np.sqrt(hist / s).astype(np.float32) if s > 0 else np.zeros(256, np.float32)

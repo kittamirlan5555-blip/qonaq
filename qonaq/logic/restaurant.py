@@ -13,6 +13,7 @@ from typing import Any, Protocol
 
 from qonaq.config import AlertThresholds, RestaurantThresholds
 from qonaq.logic.base import Event, PresenceFilter, ZoneObservation
+from qonaq.logic.tablesignals import fuse
 
 
 class TableState(StrEnum):
@@ -340,7 +341,7 @@ class TableMachine:
             self._set_state(TableState.NEEDS_CLEANING, left_ts, out)
             self._cleaned(ep.last_seen, out, by="staff_visit",
                           confidence="high" if ep.has_staff else "low")
-        elif self.th.use_table_appearance and obs.table_dirty is False:
+        elif self._signals_on and self._table_dirty(obs) is False:
             self._set_state(TableState.NEEDS_CLEANING, left_ts, out)
             self._cleaned(left_ts, out, by="appearance", confidence="low")
         else:
@@ -350,20 +351,37 @@ class TableMachine:
     def _step_dirty(self, ts: float, obs: ZoneObservation, out: list[Event]) -> None:
         if self._try_seat(ts, out, dirty=True):
             return
-        if self.th.use_table_appearance and not (self._n_guest or self._n_unknown or self._n_staff):
-            if obs.table_dirty is False:
+        if self._signals_on and not (self._n_guest or self._n_unknown or self._n_staff):
+            dirty_sig = self._table_dirty(obs)
+            if dirty_sig is False:
                 if self._clean_since is None:
                     self._clean_since = ts
                 if ts - self._clean_since >= self.th.appearance_clean_confirm_s:
                     self._cleaned(self._clean_since, out, by="appearance", confidence="low")
                     return
-            elif obs.table_dirty is True:
+            elif dirty_sig is True:
                 self._clean_since = None
         if self._left_ts is not None and not self._dirty_alerted:
             dirty = ts - self._left_ts
             if dirty >= self.al.dirty_table_s:
                 self._dirty_alerted = True
                 out.append(self._ev(ts, "alert", kind="dirty_table", dirty_s=round(dirty, 1)))
+
+    @property
+    def _signals_on(self) -> bool:
+        th = self.th
+        return th.use_table_appearance or th.use_table_classifier or th.use_dish_detection
+
+    def _table_dirty(self, obs: ZoneObservation) -> bool | None:
+        """Слияние сигналов состояния стола (W3): эталон пустого стола + классификатор + посуда."""
+        th = self.th
+        sigs: list[tuple[str, bool | None]] = []
+        if th.use_table_appearance:
+            sigs.append(("ref", obs.table_dirty))
+        for name, val in obs.table_signals or ():
+            if (name == "clf" and th.use_table_classifier) or (name == "dishes" and th.use_dish_detection):
+                sigs.append((name, val))
+        return fuse(sigs, th.table_clean_min_agree, th.table_dirty_min_agree)
 
     def _cleaned(self, ts: float, out: list[Event], by: str, confidence: str) -> None:
         left = self._left_ts if self._left_ts is not None else self.state_since

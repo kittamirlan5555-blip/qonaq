@@ -398,3 +398,67 @@ def test_grace_zero_means_nobody_is_preexisting():
     tl = Timeline(machine(**FAST)).run(10, guests=G)
     assert tl.m.state == TableState.SEATED_WAITING
     assert tl.of("seated")[0].payload["preexisting"] is False
+
+
+# ---------------------------------------------------------------- W3: слияние сигналов состояния стола
+from qonaq.logic.tablesignals import fuse  # noqa: E402
+
+ALL3 = dict(use_table_appearance=True, use_table_classifier=True, use_dish_detection=True)
+
+
+def test_fuse_rules():
+    assert fuse([("ref", False), ("clf", False), ("dishes", False)]) is False
+    assert fuse([("ref", True), ("clf", True), ("dishes", False)]) is True
+    assert fuse([("ref", False), ("clf", True), ("dishes", None)]) is None  # ничья
+    assert fuse([("ref", False), ("clf", None), ("dishes", None)]) is None  # один голос из трёх < 2
+    assert fuse([("ref", False)]) is False  # один включённый сигнал решает сам
+    assert fuse([]) is None
+    assert fuse([("ref", False), ("clf", None)], clean_min_agree=1) is False
+
+
+def _left_table(**th):
+    """Гости посидели, их обслужили, ушли — стол NEEDS_CLEANING (сигналы молчат, пока ждём уход)."""
+    return seated(Timeline(machine(**th))).run(6, guests=G, staff=W).run(30, guests=G).run(100)
+
+
+def test_two_signals_agree_clean_table_becomes_free():
+    tl = _left_table(**ALL3)
+    assert tl.m.state == TableState.NEEDS_CLEANING
+    tl.run(12, table_dirty=None, table_signals=(("clf", False), ("dishes", True)))
+    assert tl.m.state == TableState.NEEDS_CLEANING  # 1 против 1 — нет согласия
+    tl.run(12, table_dirty=False, table_signals=(("clf", False), ("dishes", False)))
+    assert tl.m.state == TableState.FREE
+    assert tl.of("cleaned")[0].payload["by"] == "appearance"
+
+
+def test_single_noisy_signal_does_not_clean_with_three_enabled():
+    tl = _left_table(**ALL3)
+    tl.run(60, table_dirty=None, table_signals=(("clf", False), ("dishes", None)))
+    assert tl.m.state == TableState.NEEDS_CLEANING
+
+
+def test_dishes_flag_off_ignores_dish_signal():
+    tl = _left_table(use_table_appearance=True, use_table_classifier=True)
+    tl.run(12, table_dirty=False, table_signals=(("clf", False), ("dishes", True)))
+    assert tl.m.state == TableState.FREE  # dishes выключен — ref и clf согласны
+
+
+def test_classifier_alone_can_clean_when_only_it_enabled():
+    tl = _left_table(use_table_classifier=True)
+    tl.run(12, table_signals=(("clf", False),))
+    assert tl.m.state == TableState.FREE
+
+
+def test_signals_ignored_while_people_at_table():
+    tl = _left_table(**ALL3)
+    tl.run(12, staff=W, table_dirty=False, table_signals=(("clf", False), ("dishes", False)))
+    # официант у стола ≥ clean_min_s — стол убран визитом, а не сигналами
+    assert tl.m.state == TableState.FREE
+    assert tl.of("cleaned")[0].payload["by"] == "staff_visit"
+
+
+def test_dirty_signals_keep_table_dirty_and_alert():
+    tl = _left_table(**ALL3)
+    tl.run(320, table_dirty=True, table_signals=(("clf", True), ("dishes", True)))
+    assert tl.m.state == TableState.NEEDS_CLEANING
+    assert "dirty_table" in tl.alerts()

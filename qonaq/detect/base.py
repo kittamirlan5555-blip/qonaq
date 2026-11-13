@@ -13,6 +13,13 @@ import numpy as np
 
 PERSON, CHAIR, TABLE = "person", "chair", "dining table"
 COCO_IDS = {0: PERSON, 56: CHAIR, 60: TABLE}
+# Посуда (W3, сигнал «на столе что-то осталось»): включается detector.dishes.
+DISH_IDS = {39: "bottle", 40: "wine glass", 41: "cup", 42: "fork", 43: "knife", 44: "spoon", 45: "bowl"}
+DISH_LABELS = frozenset(DISH_IDS.values())
+
+
+def class_ids(dishes: bool = False) -> dict[int, str]:
+    return {**COCO_IDS, **DISH_IDS} if dishes else dict(COCO_IDS)
 
 
 @dataclass(frozen=True)
@@ -92,7 +99,7 @@ def create_detector(cfg) -> Detector:
         from qonaq.detect.cache import CachingDetector
 
         model = cfg.model.replace(".", "_") if backend == "ultralytics" else f"{cfg.onnx_model}-t{cfg.onnx_tiles}"
-        key = f"{backend}-{model}-c{conf:.2f}"
+        key = f"{backend}-{model}-c{conf:.2f}" + ("-dish" if getattr(cfg, "dishes", False) else "")
         return CachingDetector(lambda: _create(cfg, backend, conf), cache_dir, key)
     return _create(cfg, backend, conf)
 
@@ -102,7 +109,8 @@ def _create(cfg, backend: str, conf: float) -> Detector:
         from qonaq.detect.ultra import UltralyticsDetector
 
         return UltralyticsDetector(model=cfg.model, fallback_models=cfg.fallback_models, conf=conf,
-                                   imgsz=cfg.imgsz, device=cfg.device)
+                                   imgsz=cfg.imgsz, device=cfg.device, classes=class_ids(cfg.dishes))
     from qonaq.detect.onnx_yolox import OnnxYoloxDetector
 
-    return OnnxYoloxDetector(model=cfg.onnx_model, conf=conf, device=cfg.device, tiles=cfg.onnx_tiles)
+    return OnnxYoloxDetector(model=cfg.onnx_model, conf=conf, device=cfg.device, tiles=cfg.onnx_tiles,
+                             classes=class_ids(cfg.dishes))

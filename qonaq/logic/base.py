@@ -24,6 +24,8 @@ class ZoneObservation:
     standing_tracks: tuple[int, ...] | None = None
     # Сигнал по эталону пустого стола: True — на столе что-то есть, False — стол как эталон, None — нет данных.
     table_dirty: bool | None = None
+    # W3: прочие сигналы состояния стола [(имя, True/False/None)] — clf, dishes. Сливаются в логике.
+    table_signals: tuple[tuple[str, bool | None], ...] | None = None
     # service_point: сотрудник за стойкой (clinic).
     staff_behind_desk: bool | None = None
 

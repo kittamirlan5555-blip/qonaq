@@ -76,7 +76,7 @@ def nms(boxes: np.ndarray, scores: np.ndarray, iou_thr: float) -> list[int]:
 
 class OnnxYoloxDetector:
     def __init__(self, model: str = "yolox_s", conf: float = 0.25, iou: float = 0.5, device: str = "auto",
-                 tiles: int = 1, threads: int | None = None):
+                 tiles: int = 1, threads: int | None = None, classes: dict[int, str] | None = None):
         import onnxruntime as ort
 
         path = ensure_weights(model)
@@ -101,7 +101,8 @@ class OnnxYoloxDetector:
         self._input = inp.name
         self.size = int(inp.shape[2])  # квадратный вход 416 или 640
         self._grid, self._stride = self._make_grids(self.size)
-        self._cls_idx = np.array(sorted(COCO_IDS), dtype=int)
+        self._classes = dict(classes or COCO_IDS)
+        self._cls_idx = np.array(sorted(self._classes), dtype=int)
 
     @staticmethod
     def _make_grids(size: int) -> tuple[np.ndarray, np.ndarray]:
@@ -159,7 +160,7 @@ class OnnxYoloxDetector:
             for i in nms(boxes[idx], scores[idx], self.iou):
                 b = boxes[idx][i]
                 dets.append(Detection(float(b[0]), float(b[1]), float(b[2]), float(b[3]),
-                                      float(scores[idx][i]), COCO_IDS[int(k)]))
+                                      float(scores[idx][i]), self._classes[int(k)]))
         return dets
 
     def detect(self, frames: Sequence[np.ndarray]) -> list[list[Detection]]:
