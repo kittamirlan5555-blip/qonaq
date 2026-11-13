@@ -31,7 +31,7 @@ zones:
 actors:
 - id: g1
   kind: guest
-  sprite: 6
+  sprite: 13
   path:
   - t: 0
     at: &id002 [760, 425]

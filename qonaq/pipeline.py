@@ -153,7 +153,7 @@ class CameraRuntime:
         obs_people = []
         for tr, zones in placed:
             table = next((z for z in zones if z in table_ids), None)
-            hist = torso_hist(frame, tr.xyxy) if self.uniform is not None else None
+            hist = torso_hist(frame, tr.xyxy)  # дёшево; нужна и форме, и проверке подмены id трекером
             obs_people.append(PersonObs(tr.id, tr.xyxy, table, hist, app.get(tr.id)))
         decisions = self.roles.update(ts, obs_people)
 

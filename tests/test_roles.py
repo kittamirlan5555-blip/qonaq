@@ -178,3 +178,30 @@ def test_no_appearance_means_old_behaviour():
     rt = RoleTracker(RolesConfig(), seat_min_s=15)
     d, _ = run(rt, 8, lambda ts: [PersonObs(5, STANDING_BOX, "T01", appearance=None)])
     assert d[5].role == UNKNOWN
+
+
+def _hist(seed):
+    rng = np.random.default_rng(seed)
+    h = rng.random(HIST_SIZE).astype(np.float32) ** 4
+    return h / h.sum()
+
+
+def test_id_switch_to_other_person_resets_history():
+    """ByteTrack отдал id сидящего гостя подошедшему официанту: рамка сменила пропорции и одежда другая —
+    официант не получает «сидел 30 с», у него новый стабильный id."""
+    rt = RoleTracker(seat_min_s=15)
+    guest_h, waiter_h = _hist(1), _hist(2)
+    d, t = run(rt, 30, lambda ts: [PersonObs(1, SEATED_BOX, "T01", guest_h)])
+    assert d[1].role == GUEST
+    sid_guest = d[1].stable_id
+    d = rt.update(t, [PersonObs(1, STANDING_BOX, "T01", waiter_h)])
+    assert d[1].role == UNKNOWN and d[1].stable_id != sid_guest and d[1].dwell_s == 0
+
+
+def test_guest_standing_up_keeps_history():
+    rt = RoleTracker(seat_min_s=15)
+    h = _hist(3)
+    d, t = run(rt, 30, lambda ts: [PersonObs(1, SEATED_BOX, "T01", h)])
+    sid = d[1].stable_id
+    d = rt.update(t, [PersonObs(1, (100.0, 20.0, 160.0, 180.0), "T01", h)])  # встал: та же одежда
+    assert d[1].stable_id == sid and d[1].role == GUEST

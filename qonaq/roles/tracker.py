@@ -47,6 +47,7 @@ class _TrackState:
     tables: dict[str, float] = field(default_factory=dict)  # зона -> когда последний раз был
     uniform: float | None = None  # сглаженная похожесть на форму
     app: deque = field(default_factory=deque)  # (ts, logit p(staff)) — внешний вид по треку
+    hist: np.ndarray | None = None  # сглаженная гистограмма торса (для проверки подмены id)
     votes: deque = field(default_factory=deque)  # (ts, role)
     role: str = UNKNOWN
     confidence: float = 0.0
@@ -79,6 +80,7 @@ class RoleTracker:
         self.seat_min_s = seat_min_s
         self.uniform = uniform
         self._tracks: dict[int, _TrackState] = {}
+        self._next_sid = 10_000_000  # стабильные id для «новых людей на старом id трекера»
 
     # ------------------------------------------------------------------ state
     def _inherit(self, obs: PersonObs, ts: float, present: set[int]) -> _TrackState | None:
@@ -96,6 +98,22 @@ class RoleTracker:
             return None
         return self._tracks.pop(best)
 
+    def _identity_jump(self, st: _TrackState, p: PersonObs) -> bool:
+        """Резкая смена пропорций рамки И другая одежда (гистограмма торса) → другой человек.
+        Гость, вставший из-за стола, меняет пропорции, но не одежду — его история сохраняется."""
+        cfg = self.cfg
+        if not cfg.identity_jump_aspect or p.torso_hist is None or st.hist is None:
+            return False
+        x1, y1, x2, y2 = st.xyxy
+        a1 = max(y2 - y1, 1.0) / max(x2 - x1, 1.0)
+        x1, y1, x2, y2 = p.xyxy
+        a2 = max(y2 - y1, 1.0) / max(x2 - x1, 1.0)
+        if max(a1, a2) / min(a1, a2) < cfg.identity_jump_aspect:
+            return False
+        from qonaq.roles.uniform import similarity
+
+        return similarity(st.hist, p.torso_hist) < cfg.identity_jump_similarity
+
     def update(self, ts: float, people: list[PersonObs]) -> dict[int, RoleDecision]:
         cfg = self.cfg
         present = {p.track_id for p in people}
@@ -106,7 +124,15 @@ class RoleTracker:
                 st = self._inherit(p, ts, present) or _TrackState(first_ts=ts, last_ts=ts, xyxy=p.xyxy,
                                                                    stable_id=p.track_id)
                 self._tracks[p.track_id] = st
+            elif self._identity_jump(st, p):
+                # Трекер перекинул id на другого человека (официант подошёл и перекрыл гостя): рамка резко
+                # сменила форму. Историю (сидел N минут) новому человеку не отдаём — новый стабильный id.
+                self._next_sid += 1
+                st = _TrackState(first_ts=ts, last_ts=ts, xyxy=p.xyxy, stable_id=self._next_sid)
+                self._tracks[p.track_id] = st
             st.last_ts, st.xyxy = ts, p.xyxy
+            if p.torso_hist is not None:
+                st.hist = p.torso_hist if st.hist is None else 0.8 * st.hist + 0.2 * p.torso_hist
             # --- зона-стол с допуском на кратковременный выход
             if p.table_zone is not None:
                 if p.table_zone != st.zone:
