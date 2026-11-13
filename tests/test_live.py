@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from qonaq.alerts.telegram import AlertDispatcher, TelegramSender, format_alert
-from qonaq.config import AlertThresholds, CameraConfig, ClinicThresholds, RestaurantThresholds, SiteConfig
+from qonaq.config import AlertThresholds, CameraConfig, ClinicThresholds, RestaurantThresholds, RolesConfig, SiteConfig
 from qonaq.detect.base import Detection, FakeDetector
 from qonaq.events.store import EventStore
 from qonaq.logic.base import Event, ZoneObservation
@@ -249,7 +249,8 @@ def live(tmp_path):
     site = SiteConfig(site_id="t", name="Тест", runs_dir=str(tmp_path),
                       cameras=[CameraConfig(id="cam", source="scripted.mp4")],
                       thresholds=RestaurantThresholds(seat_min_s=2, preexisting_grace_s=0, dropout_tolerance_s=1),
-                      alerts=AlertThresholds(no_waiter_s=4))
+                      alerts=AlertThresholds(no_waiter_s=4),
+                      roles=RolesConfig(standing_guest_min_s=2))  # bbox 80×160 — «стоит» (W2: стоящий = гость позже)
     zones = ZoneSet(camera_id="cam", frame_size=(320, 240),
                     zones=[Zone(id="T01", polygon=[(0, 0), (320, 0), (320, 240), (0, 240)])])
     det = FakeDetector([[Detection(100, 40, 180, 200, 0.9, "person")]])

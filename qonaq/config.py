@@ -113,6 +113,9 @@ class RolesConfig(_Model):
     reid_gap_s: float = 4.0  # новый трек рядом с недавно потерянным наследует его историю
     reid_dist: float = 0.6  # в долях диагонали bbox
     standing_aspect: float = 1.9  # h/w bbox выше — «стоит» (слабый признак)
+    # W2: стоящий неподвижно у стола становится «гостем» только после стольких секунд (официант, убирающий
+    # или принимающий заказ, стоит 10–60 с). Сидящий — после seat_min_s.
+    standing_guest_min_s: float = 60.0
     # Визит неизвестного к занятому столу считается визитом персонала, только если он стоит (SPEC §9a п.3).
     visit_requires_standing: bool = True
     staff_profile: str | None = None  # путь к configs/staff_profile.yaml

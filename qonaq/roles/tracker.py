@@ -146,7 +146,8 @@ class RoleTracker:
         dwell = ts - st.zone_since if st.zone is not None else 0.0
         guest_scores, staff_scores, reasons = [], [], []
         # 1) долго в зоне стола и почти не двигается -> гость
-        if st.zone is not None and dwell >= self.seat_min_s and len(st.positions) >= 3:
+        need = self.seat_min_s if not standing else max(self.seat_min_s, cfg.standing_guest_min_s)
+        if st.zone is not None and dwell >= need and len(st.positions) >= 3:
             pts = np.array([(x, y) for _, x, y in st.positions], dtype=np.float32)
             med = np.median(pts, axis=0)
             spread = float(np.percentile(np.hypot(pts[:, 0] - med[0], pts[:, 1] - med[1]), 90))

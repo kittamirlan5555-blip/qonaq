@@ -59,6 +59,7 @@ def build_X(feats: dict[str, dict], cfg: str) -> np.ndarray:
     return np.concatenate(parts, axis=1)
 
 
+ROLE_C = 0.01  # сильная регуляризация: при перекрёстных залах чуть лучше (перебор C — EVAL.md §6)
 TRAIN_CAP = 3000  # не больше стольких кропов одного класса из одного зала в обучении (скорость; тест — полный)
 
 
@@ -77,7 +78,7 @@ def cap_train(tr: np.ndarray, y: np.ndarray, venues: np.ndarray, cap: int = TRAI
 def _eval_split(X, y, tr, te, small, kind="logreg", venues=None) -> tuple[dict, Head, np.ndarray]:
     if venues is not None:
         tr = cap_train(tr, y, venues)
-    head = train_head(X[tr], y[tr], CLASSES, kind=kind)
+    head = train_head(X[tr], y[tr], CLASSES, kind=kind, C=ROLE_C)
     p = head.predict_proba(X[te])[:, 1]
     yt = y[te]
     st = small[te] == 1
@@ -123,7 +124,7 @@ def evaluate(feats: dict[str, dict], cfgs: list[str], kinds: tuple[str, ...] = (
                     te = idx_v[te_v]
                     if (y[te] == 1).sum() == 0:
                         continue
-                    head = train_head(X[cap_train(tr, y, v)], y[cap_train(tr, y, v)], CLASSES, kind=kind)
+                    head = train_head(X[cap_train(tr, y, v)], y[cap_train(tr, y, v)], CLASSES, kind=kind, C=ROLE_C)
                     ps.append(head.predict_proba(X[te])[:, 1])
                     ys.append(y[te])
                 if ps:
@@ -209,7 +210,7 @@ def run(index_csv: Path, encoders: list[str], out_dir: Path, models_dir: Path, f
     sel = cap_train(np.arange(len(y)), y, base["venue"][ok], cap=6000)
     X, y = X[sel], y[sel]
     enc = [p for p in cfg_final.split("+") if p != "hsv"]
-    head = train_head(X, y, CLASSES, kind=kind, meta={
+    head = train_head(X, y, CLASSES, kind=kind, C=ROLE_C, meta={
         "task": "roles", "features": cfg_final, "encoder": enc[0] if enc else None, "hsv": "hsv" in cfg_final,
         "trained_on": sorted(set(base["venue"][ok].tolist())), "n": int(len(y)),
         "created": time.strftime("%Y-%m-%d"), "eval_mean_ABC": res[f"{cfg_final}|{kind}"]["mean_ABC"]})

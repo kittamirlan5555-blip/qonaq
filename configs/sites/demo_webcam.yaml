@@ -24,6 +24,8 @@ thresholds:
   clean_min_s: 5                # постоял у пустого стола 5 с и ушёл -> «убран»
   seat_unknown_factor: 4
   preexisting_grace_s: 0        # в демо не считаем сидящих на старте «уже обслуженными»
+roles:
+  standing_guest_min_s: 5       # вебкамера близко: сидящий человек часто выглядит «стоящим» (высокий bbox)
 alerts:
   no_waiter_s: 30               # алерт через 30 с ожидания
   dirty_table_s: 45
