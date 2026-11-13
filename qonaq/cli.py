@@ -125,6 +125,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--at", type=float, default=1.0)
     p.add_argument("--no-blur", action="store_true")
     _add_common(p)
+
+    dp = sub.add_parser("data", help="обучающие датасеты: index — единая схема и разбиения (W1)")
+    d = dp.add_subparsers(dest="data_cmd", required=True)
+    p = d.add_parser("index", help="data/datasets -> data/index/{roles,tables}.csv + summary.json")
+    p.add_argument("--root", default="data/datasets")
+    p.add_argument("--out", default="data/index")
+    p.add_argument("--no-mine", action="store_true", help="не добирать гостей зала C детектором")
+
+    tp = sub.add_parser("train", help="обучение/оценка лёгких голов (нужен scikit-learn)")
+    t = tp.add_subparsers(dest="train_cmd", required=True)
+    p = t.add_parser("roles", help="персонал/гость: leave-one-venue-out + итоговая голова models/roles_head.npz")
+    p.add_argument("--index", default="data/index/roles.csv")
+    p.add_argument("--encoders", default="mnv2,reid")
+    p.add_argument("--final", help="вариант признаков для итоговой головы, напр. mnv2+hsv")
+    p.add_argument("--out", default="runs/train")
+    p.add_argument("--models", default="models")
     return ap
 
 
@@ -339,7 +355,36 @@ def cmd_zones(args) -> int:
     return 1
 
 
+def cmd_data(args) -> int:
+    import json
+
+    from qonaq.config import PROJECT_ROOT
+    from qonaq.datasets.index import build
+
+    if args.data_cmd == "index":
+        summary = build(Path(args.root), PROJECT_ROOT, Path(args.out), mine=not args.no_mine)
+        print(json.dumps(summary, ensure_ascii=False, indent=1))
+        return 0
+    return 1
+
+
+def cmd_train(args) -> int:
+    import json
+
+    if args.train_cmd == "roles":
+        from qonaq.train.roles_eval import run
+
+        res = run(Path(args.index), [e for e in args.encoders.split(",") if e], Path(args.out), Path(args.models),
+                  final=args.final)
+        print((Path(args.out) / "roles_eval.md").read_text(encoding="utf-8"))
+        print(json.dumps({"head": res["head"], "final_cfg": res["final_cfg"]}, ensure_ascii=False))
+        return 0
+    return 1
+
+
 HANDLERS = {
+    "train": cmd_train,
+    "data": cmd_data,
     "zones": cmd_zones,
     "demo": cmd_demo,
     "report": cmd_report,

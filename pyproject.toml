@@ -25,7 +25,9 @@ dependencies = [
 [project.optional-dependencies]
 # Ultralytics — AGPL-3.0. Используется только через адаптер qonaq/detect/ultra.py (см. DECISIONS.md).
 yolo = ["ultralytics>=8.3"]
-dev = ["pytest", "ruff"]
+dev = ["pytest", "ruff", "scikit-learn>=1.3", "onnx>=1.15"]
+# Обучение/калибровка голов и подготовка энкодеров (W2/W3/W6). В рантайме камеры не нужно.
+train = ["scikit-learn>=1.3", "onnx>=1.15"]
 
 [project.scripts]
 qonaq = "qonaq.cli:main"
@@ -50,5 +52,6 @@ addopts = "-q"
 
 [tool.ruff.lint.per-file-ignores]
 "scripts/fetch_videos.py" = ["E501"]
-"qonaq/metrics/report.py" = ["E501"]  # HTML/Markdown-шаблоны
+"qonaq/metrics/report.py" = ["E501"]
+"qonaq/train/*" = ["E501"]  # Markdown-таблицы  # HTML/Markdown-шаблоны
 "tests/*" = ["E501"]
