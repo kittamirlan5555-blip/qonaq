@@ -99,7 +99,11 @@ class TableSignals:
             sig: list[tuple[str, bool | None]] = []
             hidden = _touches(box, people)
             if self.use_dishes:
-                sig.append(("dishes", None if hidden else self.dishes_in(zid, objects) >= self.th.dish_min_count))
+                if hidden:
+                    sig.append(("dishes", None))
+                else:
+                    seen = self.dishes_in(zid, objects) >= self.th.dish_min_count
+                    sig.append(("dishes", True if seen else (False if self.th.dish_absent_is_clean else None)))
             if self.clf is not None:
                 last = self._clf_last.get(zid)
                 if hidden:

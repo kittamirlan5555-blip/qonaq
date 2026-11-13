@@ -101,10 +101,41 @@ def format_table(res: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def load_alerts(run_dir: str | Path) -> list[tuple[float, str, str]]:
+    from qonaq.events.store import EventStore
+
+    store = EventStore(Path(run_dir) / "events.sqlite")
+    try:
+        return [(float(e["ts"]), e["zone_id"], str((e.get("payload") or {}).get("kind")))
+                for e in store.events(types=["alert"])]
+    finally:
+        store.close()
+
+
+def check_alerts(gt_path: str | Path, alerts: list[tuple[float, str, str]]) -> dict[str, Any] | None:
+    """Синтетика (W4): какие алерты обязаны быть (alerts_expected) и каких быть не должно (alerts_forbidden)."""
+    data = yaml.safe_load(Path(gt_path).read_text(encoding="utf-8")) or {}
+    exp, forb = data.get("alerts_expected") or [], data.get("alerts_forbidden") or []
+    if not exp and not forb:
+        return None
+    kinds = [k for _, _, k in alerts]
+    return {"expected": {k: k in kinds for k in exp}, "forbidden_fired": {k: kinds.count(k) for k in forb},
+            "all": [{"t": round(t, 1), "zone": z, "kind": k} for t, z, k in alerts],
+            "ok": all(k in kinds for k in exp) and not any(k in kinds for k in forb)}
+
+
 def run_eval(run_dir: str | Path, gt_path: str | Path, tolerance_s: float = 10.0) -> dict[str, Any]:
     res = evaluate(load_gt(gt_path), load_system(run_dir), tolerance_s)
     res["gt_file"] = str(gt_path)
+    al = check_alerts(gt_path, load_alerts(run_dir))
+    if al is not None:
+        res["alerts"] = al
     out = Path(run_dir) / "eval.json"
     out.write_text(json.dumps(res, ensure_ascii=False, indent=2), encoding="utf-8")
-    (Path(run_dir) / "eval.md").write_text(format_table(res) + "\n", encoding="utf-8")
+    md = format_table(res)
+    if al is not None:
+        md += ("\n\nАлерты: " + ("OK" if al["ok"] else "НЕ OK") + f"; ожидались {al['expected']}, "
+               f"запрещённые сработали {al['forbidden_fired']}; все: "
+               + (", ".join(f"{a['kind']}@{a['zone']} t={a['t']:.0f}" for a in al["all"]) or "нет"))
+    (Path(run_dir) / "eval.md").write_text(md + "\n", encoding="utf-8")
     return res

@@ -462,3 +462,24 @@ def test_dirty_signals_keep_table_dirty_and_alert():
     tl.run(320, table_dirty=True, table_signals=(("clf", True), ("dishes", True)))
     assert tl.m.state == TableState.NEEDS_CLEANING
     assert "dirty_table" in tl.alerts()
+
+
+def test_table_signals_dishes_one_sided():
+    """Посуда не найдена — не голос «чистый» (детектор на датасетах почти не видит посуду)."""
+    import numpy as np
+
+    from qonaq.config import RestaurantThresholds
+    from qonaq.detect.base import Detection
+    from qonaq.zones.models import Zone, ZoneSet
+    from qonaq.zones.tablestate import TableSignals
+
+    zs = ZoneSet(camera_id="c", zones=[Zone(id="T1", type="table", polygon=[[0, 0], [100, 0], [100, 100], [0, 100]])])
+    th = RestaurantThresholds(use_dish_detection=True)
+    sig = TableSignals(zs, th)
+    frame = np.zeros((120, 120, 3), np.uint8)
+    cup = Detection(40, 40, 50, 50, 0.8, "cup")
+    assert sig.update(frame, 0.0, [], [cup])["T1"] == [("dishes", True)]
+    assert sig.update(frame, 1.0, [], [])["T1"] == [("dishes", None)]
+    assert sig.update(frame, 2.0, [(30, 30, 60, 90)], [cup])["T1"] == [("dishes", None)]  # стол закрыт человеком
+    th2 = RestaurantThresholds(use_dish_detection=True, dish_absent_is_clean=True)
+    assert TableSignals(zs, th2).update(frame, 0.0, [], [])["T1"] == [("dishes", False)]

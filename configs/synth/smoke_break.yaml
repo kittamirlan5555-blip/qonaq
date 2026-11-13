@@ -1,0 +1,77 @@
+name: smoke_break
+description: 'Гость один за T2: вышел на минуту (150→210 с) и вернулся; ушёл окончательно в 300 с.'
+background: {video: data/videos/topdown_cafe_empty.mp4, at_s: 1.0}
+fps: 2
+duration_s: 400
+sit_h: 85
+stand_h: 125
+staff_venue: C
+guest_venues: [C, B]
+zones:
+- id: T1
+  polygon:
+  - [392, 165]
+  - [565, 165]
+  - [565, 312]
+  - [392, 312]
+  seats:
+  - [440, 252]
+  - [515, 254]
+  - [478, 318]
+- id: T2
+  polygon:
+  - [195, 240]
+  - [352, 240]
+  - [352, 400]
+  - [195, 400]
+  seats:
+  - [240, 322]
+  - [312, 328]
+  - [275, 398]
+actors:
+- id: g1
+  kind: guest
+  sprite: 5
+  path:
+  - t: 0
+    at: &id002 [760, 425]
+    visible: false
+  - t: 9
+    at: &id001 [720, 425]
+    pose: stand
+  - {t: 15, at: T2, pose: sit, seat: 0}
+  - t: 155
+    at: *id001
+    pose: stand
+  - t: 156
+    at: *id002
+    visible: false
+  - t: 204
+    at: *id001
+    pose: stand
+  - {t: 210, at: T2, pose: sit, seat: 0}
+  - t: 305
+    at: *id001
+    pose: stand
+  - t: 306
+    at: *id002
+    visible: false
+- id: w1
+  kind: staff
+  sprite: 0
+  path:
+  - t: 0
+    at: *id002
+    visible: false
+  - t: 54
+    at: *id001
+    pose: stand
+  - {t: 60, at: T2, pose: stand, seat: 2}
+  - t: 80
+    at: *id001
+    pose: stand
+  - t: 81
+    at: *id002
+    visible: false
+alerts_forbidden: [no_waiter]
+notes: 'Перерыв 60 с < leave_min_s (90 с): ни «ушли», ни «ушли не дождавшись» в 150 с быть не должно.'

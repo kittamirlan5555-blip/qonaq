@@ -1,0 +1,103 @@
+name: normal_visit
+description: 'Обычный визит: двое сели, официант подошёл через 1 мин, позже второй визит; ушли, через 45 с стол убрали.'
+background: {video: data/videos/topdown_cafe_empty.mp4, at_s: 1.0}
+fps: 2
+duration_s: 430
+sit_h: 85
+stand_h: 125
+staff_venue: C
+guest_venues: [C, B]
+zones:
+- id: T1
+  polygon:
+  - [392, 165]
+  - [565, 165]
+  - [565, 312]
+  - [392, 312]
+  seats:
+  - [440, 252]
+  - [515, 254]
+  - [478, 318]
+- id: T2
+  polygon:
+  - [195, 240]
+  - [352, 240]
+  - [352, 400]
+  - [195, 400]
+  seats:
+  - [240, 322]
+  - [312, 328]
+  - [275, 398]
+actors:
+- id: g1
+  kind: guest
+  sprite: 3
+  path:
+  - t: 0
+    at: &id002 [760, 425]
+    visible: false
+  - t: 14
+    at: &id001 [720, 425]
+    pose: stand
+  - {t: 20, at: T1, pose: sit, seat: 0}
+  - t: 305
+    at: *id001
+    pose: stand
+  - t: 306
+    at: *id002
+    visible: false
+- id: g2
+  kind: guest
+  sprite: 11
+  path:
+  - t: 0
+    at: *id002
+    visible: false
+  - t: 14
+    at: *id001
+    pose: stand
+  - {t: 20, at: T1, pose: sit, seat: 1}
+  - t: 305
+    at: *id001
+    pose: stand
+  - t: 306
+    at: *id002
+    visible: false
+- id: w1
+  kind: staff
+  sprite: 0
+  path:
+  - t: 0
+    at: *id002
+    visible: false
+  - t: 74
+    at: *id001
+    pose: stand
+  - {t: 80, at: T1, pose: stand, seat: 2}
+  - t: 105
+    at: *id001
+    pose: stand
+  - t: 106
+    at: *id002
+    visible: false
+  - t: 194
+    at: *id001
+    pose: stand
+  - {t: 200, at: T1, pose: stand, seat: 2}
+  - t: 220
+    at: *id001
+    pose: stand
+  - t: 221
+    at: *id002
+    visible: false
+  - t: 339
+    at: *id001
+    pose: stand
+  - {t: 345, at: T1, pose: stand, seat: 2}
+  - t: 370
+    at: *id001
+    pose: stand
+  - t: 371
+    at: *id002
+    visible: false
+alerts_forbidden: [no_waiter, dirty_table]

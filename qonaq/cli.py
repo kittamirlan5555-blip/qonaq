@@ -130,6 +130,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-blur", action="store_true")
     _add_common(p)
 
+    p = sub.add_parser("synth", help="синтетика полного цикла (W4): сценарий YAML -> ролик + разметка -> прогон + eval")
+    p.add_argument("scenarios", nargs="*", help="configs/synth/*.yaml (по умолчанию все, кроме _*)")
+    p.add_argument("--render-only", action="store_true", help="только ролик и разметка, без прогона")
+    p.add_argument("--no-render", action="store_true", help="ролик уже есть — только прогон и eval")
+    p.add_argument("--demo", action="store_true", help="писать демо-ролик (медленнее)")
+    _add_common(p)
+
     dp = sub.add_parser("data", help="обучающие датасеты: index — единая схема и разбиения (W1)")
     d = dp.add_subparsers(dest="data_cmd", required=True)
     p = d.add_parser("index", help="data/datasets -> data/index/{roles,tables}.csv + summary.json")
@@ -143,6 +150,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--index", default="data/index/roles.csv")
     p.add_argument("--encoders", default="mnv2,reid")
     p.add_argument("--final", help="вариант признаков для итоговой головы, напр. mnv2+hsv")
+    p.add_argument("--out", default="runs/train")
+    p.add_argument("--models", default="models")
+    p = t.add_parser("tables", help="стол clean/dirty/occupied: по камерам + внешний тест, models/tables_head.npz")
+    p.add_argument("--index", default="data/index/tables.csv")
     p.add_argument("--out", default="runs/train")
     p.add_argument("--models", default="models")
     return ap
@@ -359,6 +370,49 @@ def cmd_zones(args) -> int:
     return 1
 
 
+def cmd_synth(args) -> int:
+    from qonaq.config import PROJECT_ROOT
+    from qonaq.evalgt import format_table, run_eval
+    from qonaq.runner import process_file
+    from qonaq.synth.render import build
+    from qonaq.synth.scenario import Scenario
+
+    paths = [Path(p) for p in args.scenarios] or sorted(
+        p for p in (PROJECT_ROOT / "configs" / "synth").glob("*.yaml") if not p.name.startswith("_"))
+    rows = []
+    for sp in paths:
+        sc = Scenario.load(sp)
+        name = f"synth_{sc.name}"
+        video = PROJECT_ROOT / "data" / "videos" / f"{name}.mp4"
+        if not args.no_render or not video.exists():
+            build(sp, PROJECT_ROOT)
+        if args.render_only:
+            continue
+        site = _site(args)
+        if not args.fps:
+            site.process_fps = sc.fps
+        run_dir = Path(site.runs_dir) / name
+        process_file(str(video), site, out=str(run_dir), mode="demo" if args.demo else "tracks", blur=True,
+                     max_seconds=args.max_seconds, write_video=args.demo, snapshots=0)
+        res = run_eval(run_dir, PROJECT_ROOT / "data" / "gt" / f"{name}.yaml")
+        print(f"\n## {name}: {sc.description}\n")
+        print((run_dir / "eval.md").read_text(encoding="utf-8"))
+        tot = res["total"]
+        rows.append((name, tot, res.get("alerts")))
+    if rows:
+        lines = ["| Сценарий | событий в разметке | у системы | совпало | precision | recall | алерты |",
+                 "|---|---|---|---|---|---|---|"]
+        for name, t, al in rows:
+            a = "—" if al is None else ("OK" if al["ok"] else "НЕ OK") + " (" + (
+                ", ".join(f"{x['kind']}@{x['t']:.0f}" for x in al["all"]) or "нет") + ")"
+            lines.append(f"| {name} | {t['gt']} | {t['system']} | {t['tp']} | {t['precision']} | {t['recall']} | {a} |")
+        out = Path(_site(args).runs_dir) / "synth_summary.md"
+        out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        print("\n" + "\n".join(lines))
+        _ = format_table
+    return 0
+
+
 def cmd_data(args) -> int:
     import json
 
@@ -383,10 +437,18 @@ def cmd_train(args) -> int:
         print((Path(args.out) / "roles_eval.md").read_text(encoding="utf-8"))
         print(json.dumps({"head": res["head"], "final_cfg": res["final_cfg"]}, ensure_ascii=False))
         return 0
+    if args.train_cmd == "tables":
+        from qonaq.train.tables_eval import run as run_tables
+
+        res = run_tables(Path(args.index), Path(args.out), Path(args.models))
+        print((Path(args.out) / "tables_eval.md").read_text(encoding="utf-8"))
+        print(json.dumps({"head": res["head"], "best": res["best"]}, ensure_ascii=False))
+        return 0
     return 1
 
 
 HANDLERS = {
+    "synth": cmd_synth,
     "train": cmd_train,
     "data": cmd_data,
     "zones": cmd_zones,

@@ -78,6 +78,9 @@ class RestaurantThresholds(_Model):
     use_dish_detection: bool = False  # посуда детектора (cup/bowl/bottle/...) в зоне стола без людей
     dish_conf: float = 0.3
     dish_min_count: int = 1
+    # Посуда не найдена ≠ стол чистый: на датасетах YOLOX находит посуду на 0–10% грязных столов (EVAL.md §7).
+    # False — сигнал голосует только «грязный» (иначе молчит).
+    dish_absent_is_clean: bool = False
     table_clean_min_agree: int = 2  # сколько сигналов должны сказать «чистый» (не больше числа включённых)
     table_dirty_min_agree: int = 2
 

@@ -1,0 +1,94 @@
+name: dirty_table
+description: 'Ушли, стол не убрали 5+ минут: гости ушли в 150 с, уборка только в 520 с.'
+background: {video: data/videos/topdown_cafe_empty.mp4, at_s: 1.0}
+fps: 2
+duration_s: 600
+sit_h: 85
+stand_h: 125
+staff_venue: C
+guest_venues: [C, B]
+zones:
+- id: T1
+  polygon:
+  - [392, 165]
+  - [565, 165]
+  - [565, 312]
+  - [392, 312]
+  seats:
+  - [440, 252]
+  - [515, 254]
+  - [478, 318]
+- id: T2
+  polygon:
+  - [195, 240]
+  - [352, 240]
+  - [352, 400]
+  - [195, 400]
+  seats:
+  - [240, 322]
+  - [312, 328]
+  - [275, 398]
+actors:
+- id: g1
+  kind: guest
+  sprite: 3
+  path:
+  - t: 0
+    at: &id002 [760, 425]
+    visible: false
+  - t: 9
+    at: &id001 [720, 425]
+    pose: stand
+  - {t: 15, at: T1, pose: sit, seat: 0}
+  - t: 155
+    at: *id001
+    pose: stand
+  - t: 156
+    at: *id002
+    visible: false
+- id: g2
+  kind: guest
+  sprite: 11
+  path:
+  - t: 0
+    at: *id002
+    visible: false
+  - t: 9
+    at: *id001
+    pose: stand
+  - {t: 15, at: T1, pose: sit, seat: 1}
+  - t: 155
+    at: *id001
+    pose: stand
+  - t: 156
+    at: *id002
+    visible: false
+- id: w1
+  kind: staff
+  sprite: 0
+  path:
+  - t: 0
+    at: *id002
+    visible: false
+  - t: 44
+    at: *id001
+    pose: stand
+  - {t: 50, at: T1, pose: stand, seat: 2}
+  - t: 70
+    at: *id001
+    pose: stand
+  - t: 71
+    at: *id002
+    visible: false
+  - t: 514
+    at: *id001
+    pose: stand
+  - {t: 520, at: T1, pose: stand, seat: 2}
+  - t: 545
+    at: *id001
+    pose: stand
+  - t: 546
+    at: *id002
+    visible: false
+alerts_expected: [dirty_table]
+alerts_forbidden: [no_waiter]

@@ -1,0 +1,87 @@
+name: waiting_friend
+description: 'Гости ждут друга 30 минут после подхода официанта: алерта «нет официанта» быть не должно.'
+background: {video: data/videos/topdown_cafe_empty.mp4, at_s: 1.0}
+fps: 2
+duration_s: 2000
+sit_h: 85
+stand_h: 125
+staff_venue: C
+guest_venues: [C, B]
+zones:
+- id: T1
+  polygon:
+  - [392, 165]
+  - [565, 165]
+  - [565, 312]
+  - [392, 312]
+  seats:
+  - [440, 252]
+  - [515, 254]
+  - [478, 318]
+- id: T2
+  polygon:
+  - [195, 240]
+  - [352, 240]
+  - [352, 400]
+  - [195, 400]
+  seats:
+  - [240, 322]
+  - [312, 328]
+  - [275, 398]
+actors:
+- id: g1
+  kind: guest
+  sprite: 3
+  path:
+  - t: 0
+    at: &id001 [760, 425]
+    visible: false
+  - t: 9
+    at: &id002 [720, 425]
+    pose: stand
+  - {t: 15, at: T1, pose: sit, seat: 0}
+- id: g2
+  kind: guest
+  sprite: 11
+  path:
+  - t: 0
+    at: *id001
+    visible: false
+  - t: 9
+    at: *id002
+    pose: stand
+  - {t: 15, at: T1, pose: sit, seat: 1}
+- id: w1
+  kind: staff
+  sprite: 0
+  path:
+  - t: 0
+    at: *id001
+    visible: false
+  - t: 54
+    at: *id002
+    pose: stand
+  - {t: 60, at: T1, pose: stand, seat: 2}
+  - t: 85
+    at: *id002
+    pose: stand
+  - t: 86
+    at: *id001
+    visible: false
+- id: g3
+  kind: guest
+  sprite: 20
+  path:
+  - t: 0
+    at: *id001
+    visible: false
+  - t: 1854
+    at: *id002
+    pose: stand
+  - t: 1860
+    at: [478, 300]
+    pose: sit
+alerts_forbidden: [no_waiter]
+notes: По SPEC §5 через 900 с без визита срабатывает отдельный алерт long_service_without_visit («гостей давно никто не проверял») — это не «нет
+  официанта», он ожидаем.
+alerts_expected: [long_service_without_visit]

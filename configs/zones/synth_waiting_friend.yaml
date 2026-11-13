@@ -1,0 +1,27 @@
+camera_id: synth_waiting_friend
+frame_size:
+- 768
+- 432
+zones:
+- id: T1
+  type: table
+  polygon:
+  - - 392.0
+    - 165.0
+  - - 565.0
+    - 165.0
+  - - 565.0
+    - 312.0
+  - - 392.0
+    - 312.0
+- id: T2
+  type: table
+  polygon:
+  - - 195.0
+    - 240.0
+  - - 352.0
+    - 240.0
+  - - 352.0
+    - 400.0
+  - - 195.0
+    - 400.0
