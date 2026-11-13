@@ -1,24 +1,127 @@
 # PROGRESS — Qonaq Vision
 
 _Автономные сессии по `WEEKEND_PLAN.md` (главнее `TASKS.md`). Облако Claude Code: Linux, 2 CPU, без GPU._
-_Статус задач — в таблице «Статус» в `WEEKEND_PLAN.md`; все цифры с описанием измерения — в `docs/EVAL.md`._
+_Статус задач — таблица «Статус» в `WEEKEND_PLAN.md`; все цифры с описанием измерения — `docs/EVAL.md`;
+решения — `DECISIONS.md` (D-015…D-024 — эта сессия)._
 
-## Сессия 13.11.2026 (W0 →)
+## Коротко (сессия 13.11.2026, W0–W8 сделаны, W9 — см. ниже)
+
+- **Главный вывод выходных:** отличить официанта от гостя «по виду вообще» нельзя — модель с 4 чужих залов
+  на новом зале работает как монетка (0,53–0,57 balanced accuracy). **25 размеченных кропов своего зала дают
+  0,80–0,95, 100 кропов — 0,88–0,98** (EVAL.md §6, §8). Поэтому калибровка при установке (`qonaq calibrate`) —
+  обязательная часть продукта, а общая голова выключена по умолчанию.
+- Состояние стола по картинке из открытых датасетов не обучается (на чужих камерах — уровень случайного);
+  посуду YOLOX видит редко, зато без ложных срабатываний. Основной сигнал «стол убран» — по-прежнему визит персонала
+  + эталон пустого стола (EVAL.md §7).
+- Синтетика полного цикла (6 сценариев, до 33 минут, в т.ч. на кадре реального CCTV): **все 21 событие и все 6
+  проверок алертов сошлись** после трёх исправлений логики ролей, которые синтетика и нашла (EVAL.md §9, D-020).
+- Новое: `record`, `staged-check`, `synth`, `data index`, `train roles|tables`, `calibrate collect|review|train|
+  promote|rollback|status|curve`, `health`; монитор здоровья в live, ежедневная сводка владельцу, кнопка «Неверно»
+  под алертом, правило уверенных алертов. Тестов: 173, `ruff` чистый.
+- На живой камере, macOS, реальном Telegram и Ultralytics по-прежнему **ничего не проверено** (в облаке этого нет).
+
+## Что показать
+
+1. **Кривая калибровки** (EVAL.md §8): «без калибровки — монетка, 25 кликов — 80–95%». Это аргумент для клиента
+   и для себя, почему установка = сутки записи + 15 минут разметки.
+2. **Синтетический ролик полного цикла** с панелью: `python -m qonaq synth configs/synth/normal_visit.yaml --demo`
+   → `runs/synth_normal_visit/demo.mp4` (сели → ждут → официант → ушли → «не убран» → убран). Честно: фигуры
+   вырезаны и вставлены, это проверка логики, а не «кино».
+3. Реальный ролик веранды: `python -m qonaq demo data/videos/cctv_terrace_cafe.mov --model yolox_m --tiles 2 --fps 4`
+   (как и раньше — за 88 с там ничего не меняется).
+4. Веб-панель на записи как потоке: `python -m qonaq live --site configs/sites/demo_file_as_stream.yaml` →
+   http://127.0.0.1:8000 (проверена в headless-браузере, EVAL.md §10).
+
+## Что запустить на ноутбуке (MacBook M1 Pro / Windows + RTX 2060 Super)
+
+```bash
+git pull && python3 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\Activate.ps1
+pip install -e ".[dev]"
+python -m qonaq doctor
+python scripts/fetch_videos.py
+```
+
+Постановочный тест (11 минут записи, 2 человека) — по `docs/STAGED_TEST.md`:
+
+```bash
+python -m qonaq record --source webcam:0 --seconds 660 --out data/videos/staged.mp4
+python -m qonaq staged-check data/videos/staged.mp4 --gt data/gt/staged.yaml
+```
+
+Калибровка на своей записи (проверка всего пути установки):
+
+```bash
+python -m qonaq calibrate collect data/videos/staged.mp4 --site-id home
+python -m qonaq calibrate review --site-id home        # http://127.0.0.1:8010, клики 1/2/0
+python -m qonaq calibrate train --site-id home         # «было X% → стало Y%»
+python -m qonaq calibrate promote --site-id home       # затем roles.classifier: models/site/home/active.npz
+```
+
+Синтетика и обучение (нужны датасеты, ~1 ГБ):
+
+```bash
+python scripts/fetch_datasets.py && python scripts/fetch_models.py && python -m qonaq data index
+python -m qonaq train roles && python -m qonaq calibrate curve && python -m qonaq synth
+```
+
+На Windows с RTX 2060 Super: `pip install onnxruntime-gpu` (вместо `onnxruntime`) — YOLOX и энкодер пойдут на CUDA.
+
+## Топ-5 следующих шагов
+
+1. **Постановочный тест на ноутбуке** (docs/STAGED_TEST.md) — первая живая проверка подхода официанта, ухода и уборки.
+2. **Калибровка на реальной записи клиники/кафе:** `calibrate collect` на сутках записи → 15 минут `review` →
+   `train` → сравнить «было/стало» на отложенных треках. Проверить, что авторазметка (сидел ≥ 5 мин / ≥ 3 столов)
+   на реальном зале не врёт.
+3. **Разметить 2–3 длинные реальные записи** (30–60 мин) — сейчас реальных событий «подошёл/ушёл/убрал» в EVAL ноль.
+4. Включить в рантайме откалиброванную голову и посмотреть, сколько алертов отсекает правило уверенности (W8) на
+   реальном потоке; подключить Telegram и проверить кнопку «Неверно» вживую.
+5. Детектор: на угловом тёмном ролике `yolox_s` почти не видит людей, а `yolox_m` + плитки не успевает в реальном
+   времени на CPU — проверить на RTX 2060 (onnxruntime-gpu) и/или сравнить с RT-DETR/D-FINE (Apache-2.0).
+
+## Сессия 13.11.2026 — по задачам
 
 ### W0. Хвосты — ✅
-- `.venv` на Python 3.12, `pip install -e ".[dev]"` (теперь dev включает scikit-learn и onnx) — **все тесты зелёные
-  в `.venv` проекта** (до этого гонялись только во временном окружении).
-- Баг ложных «ушли не дождавшись» **исправлен в `b40477f`** (DECISIONS D-012, 7 регрессионных тестов).
-  Раздел «Известные баги» ниже оставлен как история — баг 1 закрыт.
-- `docs/EVAL.md` создан: цифры сверки, скорость, «проверено только синтетикой», «не проверено вообще».
-  Оба CCTV-ролика перепрогнаны после исправления — таблицы сверки совпали до цифры.
+- `.venv` на Python 3.12, `pip install -e ".[dev]"` (dev теперь включает scikit-learn и onnx) — тесты зелёные в `.venv`.
+- Баг ложных «ушли не дождавшись» был исправлен в `b40477f` (D-012). Раздел «Известные баги» ниже — история.
+- `docs/EVAL.md` создан; оба CCTV-ролика перепрогнаны — таблицы сверки совпали до цифры (EVAL.md §1.2).
+
 ### W1. Данные — ✅
-- `python scripts/fetch_datasets.py` — 7 наборов (~1 ГБ) прямой ссылкой релиза `data-v1`, запасной путь `gh api`.
-- `python -m qonaq data index` — единая схема (`guest`/`staff`, `clean`/`dirty`/`occupied`), дедупликация
-  аугментаций Roboflow по исходнику, группы для честных разбиений, добор гостей зала C детектором.
-  Без сохранения кропов на диск (D-016). Пакет `qonaq/datasets/`, тесты `tests/test_datasets.py`.
-- Числа и ловушки данных — `docs/EVAL.md` §5 (главная: «грязные» столы почти все с других камер).
-- `docs/DATA_SOURCES.md` — авторы, ссылки, лицензии.
+- `scripts/fetch_datasets.py` (прямая ссылка релиза, запасной путь `gh api`), `python -m qonaq data index`:
+  единая схема, дедупликация аугментаций Roboflow, группы для честных разбиений, добор гостей зала C детектором,
+  без сохранения кропов (D-015, D-016, D-018). Числа и ловушки данных — EVAL.md §5. Лицензии — docs/DATA_SOURCES.md.
+
+### W2. Персонал / гость — ✅
+- `qonaq/roles/encoder.py` (ONNX MobileNetV2 и Youtu ReID из opencv_zoo, Apache-2.0, вход любого размера),
+  `features.py` (эмбеддинг + HSV торса/ног), `head.py` (sklearn при обучении → numpy `.npz` в рантайме),
+  `classifier.py` (`RoleClassifier`), слияние в `tracker.py`: внешний вид + «сидит → гость» + «стоит → кандидат
+  в персонал» + обход столов; `unknown` при конфликте. `--roles-head` / `roles.classifier`.
+- Цифры: EVAL.md §6. Выбран MobileNetV2 (D-019). Общая голова ухудшила сверку на реальных роликах — выключена.
+
+### W3. Состояние стола — ✅ (как код; как модель — не работает на чужих камерах)
+- `qonaq/zones/tablestate.py` (классификатор кропа + посуда детектора), `qonaq/logic/tablesignals.py` (правило
+  согласия), слияние в `logic/restaurant.py`, флаги и пороги в `thresholds`. EVAL.md §7, D-023.
+
+### W4. Синтетика — ✅
+- `python -m qonaq synth`, `qonaq/synth/`, 6 сценариев в `configs/synth/`, проверка алертов в `eval`. EVAL.md §9, D-024.
+
+### W5. Постановочный тест — ✅ (код и инструкция; живая камера не запускалась)
+- `record` (AVFoundation на macOS, DirectShow на Windows), `staged-check`, `configs/sites/staged.yaml`,
+  `docs/STAGED_TEST.md`, раздел macOS в README. Панель проверена в headless Chromium. EVAL.md §10.
+
+### W6. Калибровка — ✅
+- `qonaq/calib/`: collect (кропы с блюром + поведенческая авторазметка), review (локальная страница), train
+  (версии `models/site/<site>/vN/`), promote / rollback / status, curve. D-021, D-022. EVAL.md §8.
+
+### W7. Монитор здоровья — ✅ (только синтетика)
+- `qonaq/health/`: проверки камеры/кадра/логики/ролей, `health.json` в каждом прогоне, `qonaq health <run>`,
+  фоновая проверка в live, ежедневная сводка (`TELEGRAM_OWNER_CHAT_ID`) с 5 кадрами (блюр), кнопка «Неверно» →
+  таблица `feedback`. EVAL.md §11.
+
+### W8. Уверенные алерты — ✅ (только синтетика)
+- Алерты о гостях несут `by_role` и `confidence`; в Telegram — только уверенные (`alerts.min_role_confidence`),
+  остальные — в панели, `alerts_sent` и сводке. EVAL.md §11.
+
+<!-- W9 -->
 
 ---
 
