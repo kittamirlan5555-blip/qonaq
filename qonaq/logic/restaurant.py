@@ -59,6 +59,13 @@ class _Session:
     # по фильтру «гости + неизвестные»: сразу после посадки фильтр гостей ещё не прогрет, и его
     # отметка «пусто с…» относится к времени ДО сессии (старт потока или уход прошлых гостей).
     guest_confirmed: bool = False
+    conf_sum: float = 0.0  # W8: накопленная уверенность ролей гостей за сессию
+    conf_n: int = 0
+
+    def alert_conf(self) -> dict[str, Any]:
+        """Поля уверенности для алерта (W8): гости подтверждены ролью и средняя уверенность ролей."""
+        mean = round(self.conf_sum / self.conf_n, 2) if self.conf_n else None
+        return {"by_role": bool(self.guest_confirmed and not self.low_confidence), "confidence": mean}
     alerts: set[str] = field(default_factory=set)
 
 
@@ -91,6 +98,7 @@ class TableMachine:
         self._absent_visits: list[_Episode] = []  # визиты, пока гостей нет на месте (уборка или визит?)
         self._left_ts: float | None = None
         self._dirty_alerted = False
+        self._left_conf: dict[str, Any] | None = None
         self._clean_since: float | None = None
         self._n_guest = 0
         self._n_unknown = 0
@@ -146,6 +154,9 @@ class TableMachine:
             self._session.max_guests = max(self._session.max_guests, len(guests))
             if self._guest.state:
                 self._session.guest_confirmed = True
+            if obs.guest_confidence is not None and guests:
+                self._session.conf_sum += float(obs.guest_confidence)
+                self._session.conf_n += 1
 
         # Кандидаты в «визит персонала» среди неизвестных — только стоящие (если признак доступен).
         visitors = unknown if obs.standing_tracks is None else unknown & set(obs.standing_tracks)
@@ -306,7 +317,7 @@ class TableMachine:
         if (waited >= self.al.no_waiter_s and "no_waiter" not in s.alerts and occ.state
                 and self._episode is None):
             s.alerts.add("no_waiter")
-            out.append(self._ev(ts, "alert", kind="no_waiter", waited_s=round(waited, 1)))
+            out.append(self._ev(ts, "alert", kind="no_waiter", waited_s=round(waited, 1), **s.alert_conf()))
 
     def _step_served(self, ts: float, obs: ZoneObservation, out: list[Event]) -> None:
         s = self._session
@@ -323,7 +334,7 @@ class TableMachine:
                     and "long_service_without_visit" not in s.alerts):
                 s.alerts.add("long_service_without_visit")
                 out.append(self._ev(ts, "alert", kind="long_service_without_visit",
-                                    since_visit_s=round(ts - last, 1)))
+                                    since_visit_s=round(ts - last, 1), **s.alert_conf()))
             return
         left_ts = self._absent_since(ts)
         if left_ts is None or ts - left_ts < self.th.leave_min_s:
@@ -331,6 +342,7 @@ class TableMachine:
         out.append(self._ev(left_ts, "left", visit_duration_s=round(left_ts - s.seated_ts, 1),
                             staff_visits=s.visits, preexisting=s.preexisting))
         self._left_ts = left_ts
+        self._left_conf = s.alert_conf()
         self._dirty_alerted = False
         # Уборка могла случиться, пока мы ждали подтверждения ухода (leave_min_s).
         cleaners = [ep for ep in self._absent_visits
@@ -365,7 +377,8 @@ class TableMachine:
             dirty = ts - self._left_ts
             if dirty >= self.al.dirty_table_s:
                 self._dirty_alerted = True
-                out.append(self._ev(ts, "alert", kind="dirty_table", dirty_s=round(dirty, 1)))
+                out.append(self._ev(ts, "alert", kind="dirty_table", dirty_s=round(dirty, 1),
+                                    **(self._left_conf or {"by_role": False, "confidence": None})))
 
     @property
     def _signals_on(self) -> bool:

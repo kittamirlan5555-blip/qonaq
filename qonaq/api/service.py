@@ -35,7 +35,19 @@ class LiveService:
         kinds = {parse_source(c.source)[0] for c in site.cameras}
         self.time_base = "video" if kinds == {"file"} else "epoch"
         self.alerts = AlertDispatcher(sender if sender is not None else (sender_from_env() if use_env_sender else None),
-                                      site_name=site.name)
+                                      site_name=site.name, min_confidence=site.alerts.min_role_confidence,
+                                      confident_only=site.alerts.confident_only, store=self.store)
+        # W7: монитор здоровья + сводка владельцу системы (отдельный чат)
+        from qonaq.health.daily import FrameSampler
+        from qonaq.health.monitor import HealthMonitor
+
+        self.health = HealthMonitor()
+        self.sampler = FrameSampler(site.health.sample_every_s)
+        self.owner = sender_from_env(site.health.owner_chat_env) if use_env_sender else None
+        self._issue_sent: dict[tuple, float] = {}
+        self._daily_day: str | None = None
+        self._health_thread: threading.Thread | None = None
+        self._feedback = None
         self.writer = AsyncEventWriter(self.store)
         if pos is None and site.pos.adapter != "none":
             from qonaq.pos import create_pos
@@ -60,12 +72,15 @@ class LiveService:
         cam = self.pipeline.cameras[r.camera_id]
         titles = {z.id: z.title for z in cam.zones.zones}
         self.alerts.handle(r.events, titles)
+        self.health.observe_result(r)
         img = r.frame.copy()
         if self.site.privacy.blur_faces:
             blur_people(img, r.blur_boxes, self.site.privacy.blur_top_fraction)
         draw_zones(img, cam.zones, r.zone_states, self.site.alerts.no_waiter_s, show_ignore=False,
                    font=max(14, img.shape[1] // 70))
         draw_people(img, r, show_ids=False, thickness=1)
+        if self.site.privacy.blur_faces:
+            self.sampler.maybe_add(r, img, self._local_time_label())
         if img.shape[1] > self.jpeg_width:
             s = self.jpeg_width / img.shape[1]
             img = cv2.resize(img, (self.jpeg_width, int(img.shape[0] * s)), interpolation=cv2.INTER_AREA)
@@ -93,15 +108,80 @@ class LiveService:
         finally:
             self.finished.set()
 
+    # ------------------------------------------------------------------ здоровье (W7)
+    def _local_now(self):
+        from datetime import datetime
+
+        try:
+            from zoneinfo import ZoneInfo
+
+            return datetime.now(ZoneInfo(self.site.business.timezone)).timetuple()
+        except Exception:  # noqa: BLE001 — на Windows без пакета tzdata
+            return time.localtime()
+
+    def _local_time_label(self) -> str:
+        return time.strftime("%H:%M", self._local_now())
+
+    def health_tick(self) -> dict[str, Any]:
+        """Одна проверка: новые проблемы → владельцу; пора — ежедневная сводка. Возвращает статус."""
+        from qonaq.health.daily import build_daily, due, send_daily
+
+        st = self.health.status(live=True)
+        (self.run_dir / "health.json").write_text(__import__("json").dumps(st, ensure_ascii=False, indent=1),
+                                                  encoding="utf-8")
+        now = time.time()
+        for i in st["issues"]:
+            key = (i["kind"], i["camera_id"], i["zone_id"])
+            if now - self._issue_sent.get(key, -1e18) < self.site.health.repeat_issue_s:
+                continue
+            self._issue_sent[key] = now
+            log.warning("ЗДОРОВЬЕ %s: %s", i["camera_id"], i["message"])
+            if self.owner is not None:
+                try:
+                    self.owner.send(f"🛠 {self.site.name} · {i['camera_id']}: {i['message']}")
+                except Exception as e:  # noqa: BLE001
+                    log.warning("сводка/проблема владельцу не отправлена: %s", e)
+        lt = self._local_now()
+        if due(lt, self.site.health.daily_at, self._daily_day):
+            self._daily_day = time.strftime("%Y-%m-%d", lt)
+            daily = build_daily(self.run_dir, self.site.name, st, self.sampler.pick(self.site.health.daily_frames))
+            if self.owner is not None:
+                try:
+                    send_daily(self.owner, daily)
+                except Exception as e:  # noqa: BLE001
+                    log.warning("ежедневная сводка не отправлена: %s", e)
+        return st
+
+    def _health_loop(self) -> None:
+        while not self._stop.wait(self.site.health.check_every_s):
+            try:
+                self.health_tick()
+            except Exception:  # noqa: BLE001
+                log.exception("монитор здоровья")
+
     def start(self) -> LiveService:
         self._thread = threading.Thread(target=self._run, name="pipeline", daemon=True)
         self._thread.start()
+        if self.site.health.enabled:
+            self._health_thread = threading.Thread(target=self._health_loop, name="health", daemon=True)
+            self._health_thread.start()
+        from qonaq.alerts.telegram import FeedbackPoller, TelegramSender
+
+        if isinstance(self.alerts.sender, TelegramSender):
+            self._feedback = FeedbackPoller(self.alerts.sender, self.store).start()
         return self
 
     def stop(self) -> None:
         self._stop.set()
+        if self._feedback is not None:
+            self._feedback.stop()
         if self._thread is not None:
             self._thread.join(timeout=15)
+        try:
+            (self.run_dir / "health.json").write_text(__import__("json").dumps(
+                self.health.status(live=False), ensure_ascii=False, indent=1), encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            pass
         self.writer.close()
         last = max((s["ts"] for s in self._state.values()), default=0.0)
         self.store.set_meta(t_end=last, scene_s=self.pipeline.stats.scene_s)
@@ -133,6 +213,8 @@ class LiveService:
             "camera_ids": [c.id for c in self.site.cameras],
             "alerts": [a.to_dict() for a in list(self.alerts.feed)[-30:]][::-1],
             "telegram": self.alerts.sender is not None,
+            "alerts_held_back": self.alerts.held_back,
+            "health": self.health.status(live=True)["status"],
             "alerts_pending": self.alerts.pending(),
             "time_base": self.time_base,
             "fps": round(stats.frames / elapsed, 2),

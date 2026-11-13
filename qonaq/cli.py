@@ -177,6 +177,12 @@ def build_parser() -> argparse.ArgumentParser:
     p = c.add_parser("curve", help="кривая «n размеченных кропов -> точность» на отложенных залах W2")
     p.add_argument("--ns", default="0,25,50,100,300")
 
+    p = sub.add_parser("health", help="здоровье прогона/живой системы: проблемы, сводка (W7)")
+    p.add_argument("run_dir")
+    p.add_argument("--daily", action="store_true", help="собрать ежедневную сводку (и отправить владельцу, если "
+                                                        "есть TELEGRAM_OWNER_CHAT_ID)")
+    p.add_argument("--site")
+
     dp = sub.add_parser("data", help="обучающие датасеты: index — единая схема и разбиения (W1)")
     d = dp.add_subparsers(dest="data_cmd", required=True)
     p = d.add_parser("index", help="data/datasets -> data/index/{roles,tables}.csv + summary.json")
@@ -533,6 +539,54 @@ def cmd_calibrate(args) -> int:
     return 1
 
 
+def cmd_health(args) -> int:
+    import json
+
+    from qonaq.events.store import EventStore
+    from qonaq.health.monitor import check_events
+
+    run_dir = Path(args.run_dir)
+    saved = json.loads((run_dir / "health.json").read_text(encoding="utf-8")) if (run_dir / "health.json").exists() \
+        else {"status": "ok", "issues": [], "cameras": {}}
+    store = EventStore(run_dir / "events.sqlite")
+    try:
+        events = store.events()
+        fb = store.feedback()
+    finally:
+        store.close()
+    seen = {(i["kind"], i["camera_id"], i["zone_id"]) for i in saved["issues"]}
+    for i in check_events(events):  # проверки по журналу (на случай, если health.json старый)
+        if (i.kind, i.camera_id, i.zone_id) not in seen:
+            saved["issues"].append(i.to_dict())
+    if saved["issues"] and saved["status"] == "ok":
+        saved["status"] = "error" if any(i["severity"] == "error" for i in saved["issues"]) else "warn"
+    print(f"Статус: {saved['status']}")
+    for i in saved["issues"]:
+        print(f"  [{i['severity']}] {i['camera_id']} {i['zone_id']}: {i['message']}")
+    for cid, c in saved.get("cameras", {}).items():
+        print(f"  {cid}: посадок {c.get('seated')}, визитов персонала {c.get('visits')}, "
+              f"unknown {100 * c.get('unknown_share', 0):.0f}%")
+    if fb:
+        print(f"Отметок «неверно»: {len(fb)}")
+    if args.daily:
+        from qonaq.alerts.telegram import sender_from_env
+        from qonaq.health.daily import build_daily, send_daily
+
+        site = load_site(args.site) if args.site else SiteConfig()
+        frames = []
+        for f in sorted((run_dir / "frames").glob("*.jpg"))[: site.health.daily_frames]:
+            frames.append((f.read_bytes(), f.stem))  # снимки прогона уже с блюром
+        daily = build_daily(run_dir, site.name, saved, frames)
+        print("\n" + daily["text"])
+        owner = sender_from_env(site.health.owner_chat_env)
+        if owner is not None:
+            send_daily(owner, daily)
+            print("Отправлено владельцу системы.")
+        else:
+            print(f"(не отправлено: нет TELEGRAM_BOT_TOKEN / {site.health.owner_chat_env}); файлы: {daily['dir']}")
+    return 0 if saved["status"] != "error" else 2
+
+
 def cmd_data(args) -> int:
     import json
 
@@ -568,6 +622,7 @@ def cmd_train(args) -> int:
 
 
 HANDLERS = {
+    "health": cmd_health,
     "calibrate": cmd_calibrate,
     "record": cmd_record,
     "staged-check": cmd_staged,

@@ -26,6 +26,8 @@ class ZoneObservation:
     table_dirty: bool | None = None
     # W3: прочие сигналы состояния стола [(имя, True/False/None)] — clf, dishes. Сливаются в логике.
     table_signals: tuple[tuple[str, bool | None], ...] | None = None
+    # W8: средняя уверенность ролей «гость» в зоне на этом кадре (None — гостей нет / неизвестно).
+    guest_confidence: float | None = None
     # service_point: сотрудник за стойкой (clinic).
     staff_behind_desk: bool | None = None
 

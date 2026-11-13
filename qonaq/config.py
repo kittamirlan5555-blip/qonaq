@@ -86,6 +86,10 @@ class RestaurantThresholds(_Model):
 
 
 class AlertThresholds(_Model):
+    # W8: алерт уходит в Telegram, только если гости подтверждены ролью и средняя уверенность ролей не ниже порога.
+    # Неуверенные — в панель и отчёт, но не в Telegram. «Лучше пропустить алерт, чем отправить ложный».
+    min_role_confidence: float = 0.6
+    confident_only: bool = True
     no_waiter_s: float = 180.0
     dirty_table_s: float = 300.0
     long_service_without_visit_s: float = 900.0
@@ -167,6 +171,18 @@ class CameraConfig(_Model):
         return self.name or self.id
 
 
+class HealthSettings(_Model):
+    """Монитор здоровья и ежедневная сводка владельцу системы (W7). Чат — отдельный от администратора."""
+
+    enabled: bool = True
+    check_every_s: float = 60.0
+    daily_at: str = "23:40"  # местное время объекта (business.timezone); "" — не отправлять сводку
+    owner_chat_env: str = "TELEGRAM_OWNER_CHAT_ID"
+    daily_frames: int = 5
+    sample_every_s: float = 600.0  # как часто откладывать кадр (с блюром) для сводки
+    repeat_issue_s: float = 3600.0  # одну и ту же проблему не присылать чаще
+
+
 class SiteConfig(_Model):
     site_id: str = "demo"
     name: str = "Демо-объект"
@@ -182,6 +198,7 @@ class SiteConfig(_Model):
     business: BusinessConfig = Field(default_factory=BusinessConfig)
     privacy: PrivacyConfig = Field(default_factory=PrivacyConfig)
     pos: PosConfig = Field(default_factory=PosConfig)
+    health: HealthSettings = Field(default_factory=HealthSettings)
     runs_dir: str = "runs"
     api_host: str = "127.0.0.1"
     api_port: int = 8000

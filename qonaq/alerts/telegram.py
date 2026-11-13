@@ -29,22 +29,97 @@ class TelegramSender:
     def __init__(self, token: str, chat_id: str, client=None, timeout: float = 10.0):
         import httpx
 
-        self._url = f"https://api.telegram.org/bot{token}/sendMessage"
+        self._base = f"https://api.telegram.org/bot{token}/"
+        self._url = self._base + "sendMessage"
         self.chat_id = chat_id
         self._client = client or httpx.Client(timeout=timeout)
 
-    def send(self, text: str) -> None:
-        r = self._client.post(self._url, json={"chat_id": self.chat_id, "text": text,
-                                               "disable_web_page_preview": True})
+    def send(self, text: str, feedback_id: str | None = None) -> None:
+        """feedback_id — под сообщением кнопка «Неверно» (callback `fb:<id>`, ловит FeedbackPoller)."""
+        body: dict[str, Any] = {"chat_id": self.chat_id, "text": text, "disable_web_page_preview": True}
+        if feedback_id:
+            body["reply_markup"] = {"inline_keyboard": [[{"text": "Неверно", "callback_data": f"fb:{feedback_id}"}]]}
+        r = self._client.post(self._url, json=body)
         if r.status_code != 200:
             raise RuntimeError(f"Telegram API {r.status_code}: {r.text[:200]}")
 
+    def send_photos(self, photos: list[tuple[bytes, str]]) -> None:
+        """До 10 JPEG с подписями одним альбомом (sendMediaGroup)."""
+        import json as _json
 
-def sender_from_env() -> TelegramSender | None:
-    token, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
+        if not photos:
+            return
+        media, files = [], {}
+        for i, (data, caption) in enumerate(photos[:10]):
+            media.append({"type": "photo", "media": f"attach://p{i}", "caption": caption[:1000]})
+            files[f"p{i}"] = (f"p{i}.jpg", data, "image/jpeg")
+        r = self._client.post(self._base + "sendMediaGroup", data={"chat_id": self.chat_id,
+                                                                  "media": _json.dumps(media, ensure_ascii=False)},
+                              files=files)
+        if r.status_code != 200:
+            raise RuntimeError(f"Telegram API {r.status_code}: {r.text[:200]}")
+
+    def call(self, method: str, **body) -> dict:
+        r = self._client.post(self._base + method, json=body)
+        if r.status_code != 200:
+            raise RuntimeError(f"Telegram API {r.status_code}: {r.text[:200]}")
+        return r.json()
+
+
+def sender_from_env(chat_env: str = "TELEGRAM_CHAT_ID") -> TelegramSender | None:
+    token, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get(chat_env)
     if token and chat:
         return TelegramSender(token, chat)
     return None
+
+
+class FeedbackPoller:
+    """Кнопка «Неверно» под алертом → запись в таблицу feedback (пригодится калибровке, W6/W7).
+    Long polling getUpdates в отдельном потоке; без вебхука и без открытых портов."""
+
+    def __init__(self, sender: TelegramSender, store, timeout_s: int = 20):
+        self.sender, self.store, self.timeout_s = sender, store, timeout_s
+        self._offset = 0
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def poll_once(self) -> int:
+        res = self.sender.call("getUpdates", offset=self._offset, timeout=self.timeout_s,
+                               allowed_updates=["callback_query"])
+        n = 0
+        for u in res.get("result", []):
+            self._offset = max(self._offset, int(u["update_id"]) + 1)
+            cq = u.get("callback_query")
+            if not cq or not str(cq.get("data", "")).startswith("fb:"):
+                continue
+            alert_id = cq["data"][3:]
+            user = (cq.get("from") or {}).get("username") or str((cq.get("from") or {}).get("id", ""))
+            self.store.add_feedback(alert_id, "wrong", source="telegram", user=user)
+            try:
+                self.sender.call("answerCallbackQuery", callback_query_id=cq["id"], text="Записано: неверно. Спасибо!")
+            except Exception as e:  # noqa: BLE001
+                log.debug("answerCallbackQuery: %s", e)
+            n += 1
+        return n
+
+    def start(self) -> FeedbackPoller:
+        def run():
+            delay = 2.0
+            while not self._stop.is_set():
+                try:
+                    self.poll_once()
+                    delay = 2.0
+                except Exception as e:  # noqa: BLE001
+                    log.debug("getUpdates: %s", e)
+                    self._stop.wait(delay)
+                    delay = min(delay * 2, 120)
+
+        self._thread = threading.Thread(target=run, name="tg-feedback", daemon=True)
+        self._thread.start()
+        return self
+
+    def stop(self) -> None:
+        self._stop.set()
 
 
 def alert_key(e: Event) -> tuple:
@@ -64,6 +139,27 @@ def format_alert(e: Event, site_name: str = "", zone_title: str | None = None) -
     return f"⚠ {site_name}: {text}" if site_name else f"⚠ {text}"
 
 
+CONFIDENCE_KINDS = ("no_waiter", "long_service_without_visit", "dirty_table")
+
+
+def is_confident(e: Event, min_conf: float) -> bool:
+    """W8: алерт о гостях уверенный, если гости подтверждены ролью и уверенность ролей ≥ min_conf.
+    Нет полей уверенности (clinic, старые события) — считается уверенным."""
+    if e.payload.get("kind") not in CONFIDENCE_KINDS:
+        return True
+    if not e.payload.get("by_role", True):
+        return False
+    c = e.payload.get("confidence")
+    return c is None or float(c) >= min_conf
+
+
+def alert_id(e: Event) -> str:
+    """Короткий id для кнопки «Неверно» (callback_data ≤ 64 байт)."""
+    import hashlib
+
+    return hashlib.blake2b(repr((alert_key(e), round(e.ts, 1))).encode(), digest_size=8).hexdigest()
+
+
 @dataclass
 class AlertRecord:
     ts: float
@@ -73,16 +169,24 @@ class AlertRecord:
     text: str
     sent: bool = False
     wall: float = field(default_factory=time.time)
+    confident: bool = True
+    alert_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {"ts": self.ts, "camera_id": self.camera_id, "zone_id": self.zone_id, "kind": self.kind,
-                "text": self.text, "sent": self.sent, "wall": self.wall}
+                "text": self.text, "sent": self.sent, "wall": self.wall, "confident": self.confident,
+                "alert_id": self.alert_id}
 
 
 class AlertDispatcher:
     def __init__(self, sender: Sender | None = None, site_name: str = "", max_queue: int = 500,
-                 retry_base_s: float = 2.0, retry_max_s: float = 120.0, sleep=None):
+                 retry_base_s: float = 2.0, retry_max_s: float = 120.0, sleep=None,
+                 min_confidence: float = 0.6, confident_only: bool = True, store=None):
         self.sender = sender
+        self.min_confidence = min_confidence
+        self.confident_only = confident_only
+        self.store = store  # EventStore: журнал алертов (alerts_sent) для отчёта и обратной связи
+        self.held_back = 0
         self.site_name = site_name
         self.feed: deque[AlertRecord] = deque(maxlen=200)
         self._seen: set[tuple] = set()
@@ -109,17 +213,32 @@ class AlertDispatcher:
             if key in self._seen:
                 continue
             self._seen.add(key)
+            conf = is_confident(e, self.min_confidence)
             rec = AlertRecord(e.ts, e.camera_id, e.zone_id, e.payload.get("kind", ""),
-                              format_alert(e, self.site_name, (zone_titles or {}).get(e.zone_id)))
+                              format_alert(e, self.site_name, (zone_titles or {}).get(e.zone_id)),
+                              confident=conf, alert_id=alert_id(e))
             self.feed.append(rec)
             out.append(rec)
-            log.warning("АЛЕРТ %s", rec.text)
-            if self.sender is not None:
+            to_tg = conf or not self.confident_only
+            log.warning("АЛЕРТ %s%s", rec.text, "" if to_tg else " (неуверенный — только в отчёт)")
+            if not to_tg:
+                self.held_back += 1
+            self._log(rec)
+            if self.sender is not None and to_tg:
                 try:
                     self._q.put_nowait(rec)
                 except queue.Full:
                     log.error("очередь алертов переполнена — алерт не отправлен: %s", rec.text)
         return out
+
+    def _log(self, rec: AlertRecord) -> None:
+        if self.store is None:
+            return
+        try:
+            self.store.add_alert(rec.alert_id, rec.camera_id, rec.zone_id, rec.kind, rec.ts, rec.text,
+                                 rec.confident, rec.sent, rec.wall)
+        except Exception as e:  # noqa: BLE001
+            log.debug("журнал алертов: %s", e)
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -130,9 +249,13 @@ class AlertDispatcher:
             delay = self._retry_base
             while not self._stop.is_set():
                 try:
-                    self.sender.send(rec.text)
+                    try:
+                        self.sender.send(rec.text, feedback_id=rec.alert_id)
+                    except TypeError:  # отправитель без кнопки обратной связи
+                        self.sender.send(rec.text)
                     rec.sent = True
                     self.sent_count += 1
+                    self._log(rec)
                     break
                 except Exception as ex:  # noqa: BLE001 — сеть/Telegram недоступны: ждём и повторяем
                     self.failed_attempts += 1

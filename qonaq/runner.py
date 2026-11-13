@@ -75,8 +75,13 @@ def process_file(video: str | Path, site: SiteConfig | None = None, out: str | P
     snap_every = None
     state = {"n": 0}
 
+    from qonaq.health.monitor import HealthMonitor
+
+    health = HealthMonitor()
+
     def on_result(r: FrameResult) -> None:
         nonlocal demo, snap_every
+        health.observe_result(r)
         if mode == "demo":
             if demo is None:
                 demo = DemoRenderer(cam.zones, site, blur=blur)
@@ -103,6 +108,10 @@ def process_file(video: str | Path, site: SiteConfig | None = None, out: str | P
                    tables=sum(len(c.zones.by_type("table")) for c in pipe.cameras.values()))
     _write_run_meta(run_dir, site, pipe, stats, {"video": video.name, "mode": mode, "blur": blur,
                                                 "events": len(store.events())})
+    import json as _json
+
+    (run_dir / "health.json").write_text(_json.dumps(health.status(live=False), ensure_ascii=False, indent=1),
+                                         encoding="utf-8")
     store.close()
     log.info("готово: %s — %d кадров за %.0f с (%.1f кадр/с, x%.2f от реального времени)", run_dir,
              stats.frames, stats.wall_s, stats.fps, stats.realtime_factor)

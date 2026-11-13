@@ -159,7 +159,7 @@ class CameraRuntime:
 
         # --- наблюдения по зонам
         per_zone: dict[str, dict[str, list[int]]] = {
-            z.id: {"guest": [], "staff": [], "unknown": [], "standing": []}
+            z.id: {"guest": [], "staff": [], "unknown": [], "standing": [], "gconf": []}
             for z in self.zones.zones if z.type != "ignore"
         }
         people: list[PersonView] = []
@@ -170,6 +170,8 @@ class CameraRuntime:
                 key = d.role if d.role in (GUEST, STAFF) else "unknown"
                 sid = d.stable_id or tr.id  # стабильный id переживает смену id трекером
                 per_zone[zid][key].append(sid)
+                if key == GUEST:
+                    per_zone[zid]["gconf"].append(d.confidence)
                 if d.standing:
                     per_zone[zid]["standing"].append(sid)
         dirty = self.appearance.update(frame, ts, [t.xyxy for t in tracks] + [d.xyxy for d in persons_all],
@@ -188,6 +190,7 @@ class CameraRuntime:
                 ts=ts, zone_id=z.id, guest_tracks=tuple(pz["guest"]), staff_tracks=tuple(pz["staff"]),
                 unknown_tracks=tuple(pz["unknown"]), table_dirty=dirty.get(z.id), staff_behind_desk=behind,
                 table_signals=tuple(tsig[z.id]) if z.id in tsig else None,
+                guest_confidence=float(np.mean(pz["gconf"])) if pz["gconf"] else None,
                 standing_tracks=tuple(pz["standing"]) if site.roles.visit_requires_standing else None,
             ))
         events = self.engine.update(observations)

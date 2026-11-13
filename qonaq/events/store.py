@@ -51,6 +51,17 @@ CREATE TABLE IF NOT EXISTS sessions (
     UNIQUE(camera_id, zone_id, sid, kind)
 );
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS alerts_sent (
+    alert_id TEXT PRIMARY KEY,
+    camera_id TEXT NOT NULL, zone_id TEXT NOT NULL, kind TEXT NOT NULL, ts REAL NOT NULL,
+    text TEXT NOT NULL DEFAULT '', confident INTEGER NOT NULL DEFAULT 1, sent INTEGER NOT NULL DEFAULT 0,
+    wall REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    alert_id TEXT NOT NULL, verdict TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'telegram',
+    user TEXT NOT NULL DEFAULT '', wall REAL NOT NULL, note TEXT NOT NULL DEFAULT ''
+);
 """
 
 SESSION_COLS = (
@@ -207,6 +218,33 @@ class EventStore:
             args.append(kind)
         with self._lock:
             return [dict(r) for r in self._db.execute(q + " ORDER BY seated_ts, id", args)]
+
+    # ------------------------------------------------------------------ алерты и обратная связь (W7/W8)
+    def add_alert(self, alert_id: str, camera_id: str, zone_id: str, kind: str, ts: float, text: str,
+                  confident: bool, sent: bool, wall: float) -> None:
+        with self._lock, self._db:
+            self._db.execute("INSERT OR REPLACE INTO alerts_sent VALUES (?,?,?,?,?,?,?,?,?)",
+                             (alert_id, camera_id, zone_id, kind, float(ts), text, int(confident), int(sent), wall))
+
+    def alerts_sent(self) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._db.execute("SELECT * FROM alerts_sent ORDER BY ts").fetchall()
+        return [dict(r) for r in rows]
+
+    def add_feedback(self, alert_id: str, verdict: str, source: str = "telegram", user: str = "",
+                     wall: float | None = None, note: str = "") -> None:
+        import time as _t
+
+        with self._lock, self._db:
+            self._db.execute("INSERT INTO feedback(alert_id, verdict, source, user, wall, note) VALUES (?,?,?,?,?,?)",
+                             (alert_id, verdict, source, user, wall or _t.time(), note))
+
+    def feedback(self) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT f.*, a.camera_id, a.zone_id, a.kind, a.ts FROM feedback f "
+                "LEFT JOIN alerts_sent a ON a.alert_id = f.alert_id ORDER BY f.id").fetchall()
+        return [dict(r) for r in rows]
 
     def close(self) -> None:
         with self._lock:
