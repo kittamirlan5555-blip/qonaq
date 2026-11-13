@@ -19,6 +19,7 @@ def _add_common(p: argparse.ArgumentParser) -> None:
     p.add_argument("--conf", type=float, help="порог уверенности детектора")
     p.add_argument("--max-seconds", type=float, help="обработать только первые N секунд")
     p.add_argument("--det-cache", help="папка кэша детекций (повторные прогоны того же видео — без детектора)")
+    p.add_argument("--roles-head", help="голова «персонал/гость» (models/roles_head.npz); 'none' — выключить")
 
 
 def _site(args) -> SiteConfig:
@@ -41,6 +42,9 @@ def _site(args) -> SiteConfig:
         d.conf = args.conf
     if getattr(args, "det_cache", None):
         d.cache_dir = args.det_cache
+    rh = getattr(args, "roles_head", None)
+    if rh:
+        site.roles.classifier = None if rh.lower() == "none" else rh
     return site
 
 

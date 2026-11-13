@@ -22,6 +22,7 @@ class PersonObs:
     xyxy: tuple[float, float, float, float]
     table_zone: str | None = None
     torso_hist: np.ndarray | None = None
+    appearance: float | None = None  # p(staff) от RoleClassifier на этом кадре (None — не считали)
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,7 @@ class _TrackState:
     positions: deque = field(default_factory=deque)  # (ts, cx, cy)
     tables: dict[str, float] = field(default_factory=dict)  # зона -> когда последний раз был
     uniform: float | None = None  # сглаженная похожесть на форму
+    app: deque = field(default_factory=deque)  # (ts, logit p(staff)) — внешний вид по треку
     votes: deque = field(default_factory=deque)  # (ts, role)
     role: str = UNKNOWN
     confidence: float = 0.0
@@ -122,6 +124,12 @@ class RoleTracker:
             if self.uniform is not None and p.torso_hist is not None:
                 u = self.uniform.score(p.torso_hist)
                 st.uniform = u if st.uniform is None else 0.8 * st.uniform + 0.2 * u
+            # --- внешний вид (классификатор): среднее логитов за окно
+            if p.appearance is not None and np.isfinite(p.appearance):
+                q = float(np.clip(p.appearance, 1e-3, 1 - 1e-3))
+                st.app.append((ts, float(np.log(q / (1 - q)))))
+            while st.app and st.app[0][0] < ts - cfg.appearance_window_s:
+                st.app.popleft()
             out[p.track_id] = self._decide(st, ts)
         # забываем давно пропавшие
         ttl = max(cfg.multi_table_window_s, 30.0)
@@ -156,12 +164,31 @@ class RoleTracker:
             if st.uniform >= thr:
                 staff_scores.append(min(0.95, 0.6 + 0.35 * (st.uniform - thr) / max(1e-6, 1 - thr)))
                 reasons.append("uniform")
+        # 4) внешний вид (W2): среднее p(staff) по треку
+        app_p = self.appearance_p(st)
+        if app_p is not None:
+            hi, lo = cfg.appearance_staff_thr, cfg.appearance_guest_thr
+            if app_p >= hi:
+                staff_scores.append(0.55 + 0.35 * (app_p - hi) / max(1e-6, 1 - hi))
+                reasons.append("look_staff")
+            elif app_p <= lo:
+                guest_scores.append(0.55 + 0.3 * (lo - app_p) / max(1e-6, lo))
+                reasons.append("look_guest")
         g, s = _noisy_or(guest_scores), _noisy_or(staff_scores)
+        if g >= 0.5 and s >= 0.5 and abs(g - s) < cfg.conflict_margin:
+            # сигналы расходятся (например, сидит долго, но выглядит как официант) — не угадываем
+            return UNKNOWN, 0.5, (*reasons, "conflict"), standing, dwell
         if s >= 0.5 and s >= g:
             return STAFF, s, tuple(reasons), standing, dwell
         if g >= 0.5:
             return GUEST, g, tuple(reasons), standing, dwell
         return UNKNOWN, 1.0 - max(g, s), tuple(reasons), standing, dwell
+
+    def appearance_p(self, st: _TrackState) -> float | None:
+        if len(st.app) < max(1, self.cfg.appearance_min_samples):
+            return None
+        m = float(np.mean([v for _, v in st.app]))
+        return 1.0 / (1.0 + np.exp(-m))
 
     def _decide(self, st: _TrackState, ts: float) -> RoleDecision:
         role, conf, reasons, standing, dwell = self._instant(st, ts)

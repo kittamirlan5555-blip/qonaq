@@ -32,7 +32,7 @@ class Head:
             if i < len(self.layers) - 1:
                 z = np.maximum(z, 0)
         if z.shape[1] == 1:
-            p = 1.0 / (1.0 + np.exp(-z[:, 0]))
+            p = 1.0 / (1.0 + np.exp(-np.clip(z[:, 0], -50, 50)))
             return np.stack([1 - p, p], axis=1)
         z = z - z.max(axis=1, keepdims=True)
         e = np.exp(z)

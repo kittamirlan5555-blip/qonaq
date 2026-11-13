@@ -74,8 +74,10 @@ class CameraRuntime:
     """Всё состояние одной камеры: трекер, зоны, роли, логика."""
 
     def __init__(self, site: SiteConfig, cam: CameraConfig, zones: ZoneSet | None = None, pos=None,
-                 uniform: UniformProfile | None = None):
+                 uniform: UniformProfile | None = None, role_clf=None):
         self.site = site
+        self.role_clf = role_clf
+        self._app_last: dict[int, float] = {}  # id трека -> когда последний раз считали внешний вид
         self.cam = cam
         self.fps = cam.process_fps or site.process_fps
         self._zones_src = zones if zones is not None else load_camera_zones(cam)
@@ -109,6 +111,22 @@ class CameraRuntime:
 
             self.appearance = TableAppearance(self.zones, (w, h))
 
+    def _appearance(self, frame: np.ndarray, ts: float, tracks) -> dict[int, float]:
+        """p(staff) по внешнему виду — для каждого трека не чаще appearance_every_s, одним батчем."""
+        if self.role_clf is None or not tracks:
+            return {}
+        every = self.site.roles.appearance_every_s
+        due = [t for t in tracks if ts - self._app_last.get(t.id, -1e9) >= every]
+        if not due:
+            return {}
+        probs = self.role_clf.staff_proba(frame, [t.xyxy for t in due])
+        for t in due:
+            self._app_last[t.id] = ts
+        if len(self._app_last) > 2000:  # забываем старые id
+            live = {t.id for t in tracks}
+            self._app_last = {k: v for k, v in self._app_last.items() if k in live}
+        return {t.id: float(p) for t, p in zip(due, probs, strict=True)}
+
     def process(self, frame: np.ndarray, ts: float, detections: list[Detection]) -> FrameResult:
         self._ensure_scale(frame)
         site = self.site
@@ -124,11 +142,12 @@ class CameraRuntime:
         table_ids = {z.id for z in self.zones.by_type("table")}
 
         # --- роли
+        app = self._appearance(frame, ts, tracks)
         obs_people = []
         for tr, zones in placed:
             table = next((z for z in zones if z in table_ids), None)
             hist = torso_hist(frame, tr.xyxy) if self.uniform is not None else None
-            obs_people.append(PersonObs(tr.id, tr.xyxy, table, hist))
+            obs_people.append(PersonObs(tr.id, tr.xyxy, table, hist, app.get(tr.id)))
         decisions = self.roles.update(ts, obs_people)
 
         # --- наблюдения по зонам
@@ -195,7 +214,7 @@ class PipelineStats:
 class Pipeline:
     def __init__(self, site: SiteConfig, detector: Detector | None = None, store=None,
                  zones: dict[str, ZoneSet] | None = None, max_seconds: float | None = None,
-                 pos=None, sources: dict[str, VideoSource] | None = None):
+                 pos=None, sources: dict[str, VideoSource] | None = None, role_classifier=None):
         if not site.cameras:
             raise ValueError("в конфиге объекта нет ни одной камеры")
         self.site = site
@@ -210,10 +229,14 @@ class Pipeline:
                 uniform.threshold = site.roles.uniform_threshold
             else:
                 log.warning("профиль формы не найден: %s", p)
+        from qonaq.roles.classifier import load_role_classifier
+
+        role_clf = role_classifier if role_classifier is not None else load_role_classifier(site.roles.classifier)
         self.cameras: dict[str, CameraRuntime] = {}
         self.sources: dict[str, VideoSource] = {}
         for cam in site.cameras:
-            self.cameras[cam.id] = CameraRuntime(site, cam, (zones or {}).get(cam.id), pos=pos, uniform=uniform)
+            self.cameras[cam.id] = CameraRuntime(site, cam, (zones or {}).get(cam.id), pos=pos, uniform=uniform,
+                                                 role_clf=role_clf)
             if sources and cam.id in sources:
                 self.sources[cam.id] = sources[cam.id]
             else:

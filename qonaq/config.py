@@ -102,6 +102,14 @@ class RolesConfig(_Model):
     visit_requires_standing: bool = True
     staff_profile: str | None = None  # путь к configs/staff_profile.yaml
     uniform_threshold: float = 0.55
+    # --- Внешний вид (W2): голова «персонал/гость» поверх ONNX-энкодера. None — роли только по поведению.
+    classifier: str | None = None  # например models/roles_head.npz
+    appearance_every_s: float = 1.0  # как часто пересчитывать внешний вид одного трека
+    appearance_window_s: float = 10.0  # усреднение p(staff) по треку
+    appearance_staff_thr: float = 0.7  # среднее p(staff) выше — голос «персонал»
+    appearance_guest_thr: float = 0.3  # ниже — голос «гость»
+    appearance_min_samples: int = 2  # сколько оценок нужно, прежде чем голосовать
+    conflict_margin: float = 0.25  # если «гость» и «персонал» оба сильны и ближе этого — unknown
     # Зоны-столы, в которых человек считается персоналом всегда (стойка бара и т.п.) — задаются типом ignore.
 
 

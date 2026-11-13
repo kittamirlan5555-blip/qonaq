@@ -59,7 +59,24 @@ def build_X(feats: dict[str, dict], cfg: str) -> np.ndarray:
     return np.concatenate(parts, axis=1)
 
 
-def _eval_split(X, y, tr, te, small, kind="logreg") -> tuple[dict, Head, np.ndarray]:
+TRAIN_CAP = 3000  # не больше стольких кропов одного класса из одного зала в обучении (скорость; тест — полный)
+
+
+def cap_train(tr: np.ndarray, y: np.ndarray, venues: np.ndarray, cap: int = TRAIN_CAP, seed: int = 0) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    keep = []
+    for v in np.unique(venues[tr]):
+        for c in (0, 1):
+            idx = tr[(venues[tr] == v) & (y[tr] == c)]
+            if len(idx) > cap:
+                idx = rng.choice(idx, cap, replace=False)
+            keep.append(idx)
+    return np.sort(np.concatenate(keep))
+
+
+def _eval_split(X, y, tr, te, small, kind="logreg", venues=None) -> tuple[dict, Head, np.ndarray]:
+    if venues is not None:
+        tr = cap_train(tr, y, venues)
     head = train_head(X[tr], y[tr], CLASSES, kind=kind)
     p = head.predict_proba(X[te])[:, 1]
     yt = y[te]
@@ -86,7 +103,7 @@ def evaluate(feats: dict[str, dict], cfgs: list[str], kinds: tuple[str, ...] = (
             per = {}
             for venue, tr, te in leave_one_venue_out(v):
                 t0 = time.time()
-                res, _, _ = _eval_split(X, y, tr, te, sm, kind)
+                res, _, _ = _eval_split(X, y, tr, te, sm, kind, venues=v)
                 res["train_s"] = round(time.time() - t0, 1)
                 per[venue] = res
                 log.info("%s held=%s bal=%.3f P=%.3f R=%.3f", key, venue, res["all"]["balanced_acc"],
@@ -106,7 +123,7 @@ def evaluate(feats: dict[str, dict], cfgs: list[str], kinds: tuple[str, ...] = (
                     te = idx_v[te_v]
                     if (y[te] == 1).sum() == 0:
                         continue
-                    head = train_head(X[tr], y[tr], CLASSES, kind=kind)
+                    head = train_head(X[cap_train(tr, y, v)], y[cap_train(tr, y, v)], CLASSES, kind=kind)
                     ps.append(head.predict_proba(X[te])[:, 1])
                     ys.append(y[te])
                 if ps:
@@ -189,6 +206,8 @@ def run(index_csv: Path, encoders: list[str], out_dir: Path, models_dir: Path, f
         ok &= f["ok"].astype(bool)
     X = build_X(feats, cfg_final)[ok]
     y = (base["label"] == "staff").astype(int)[ok]
+    sel = cap_train(np.arange(len(y)), y, base["venue"][ok], cap=6000)
+    X, y = X[sel], y[sel]
     enc = [p for p in cfg_final.split("+") if p != "hsv"]
     head = train_head(X, y, CLASSES, kind=kind, meta={
         "task": "roles", "features": cfg_final, "encoder": enc[0] if enc else None, "hsv": "hsv" in cfg_final,

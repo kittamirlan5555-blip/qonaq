@@ -128,3 +128,53 @@ def test_uniform_beats_dwell_for_staff_standing_long():
     rt = RoleTracker(seat_min_s=15, uniform=prof)
     d, _ = run(rt, 40, lambda ts: [PersonObs(1, box, "T01", torso_hist(red, box))])
     assert d[1].role == STAFF
+
+
+# ---------------------------------------------------------------- W2: внешний вид + поведение
+def _noisy_app(p_mean, seed=0):
+    rng = np.random.default_rng(seed)
+    return lambda: float(np.clip(p_mean + rng.normal(0, 0.1), 0.01, 0.99))
+
+
+def test_appearance_staff_makes_standing_visitor_staff_quickly():
+    rt = RoleTracker(RolesConfig(), seat_min_s=15)
+    app = _noisy_app(0.9)
+    d, _ = run(rt, 4, lambda ts: [PersonObs(7, STANDING_BOX, "T01", appearance=app())])
+    assert d[7].role == STAFF and "look_staff" in d[7].reasons
+
+
+def test_appearance_guest_keeps_friend_out_of_staff():
+    """Подошёл стоя «друг» в обычной одежде: внешний вид — гость, визитом персонала не станет."""
+    rt = RoleTracker(RolesConfig(), seat_min_s=15)
+    app = _noisy_app(0.1)
+    d, _ = run(rt, 5, lambda ts: [PersonObs(8, STANDING_BOX, "T01", appearance=app())])
+    assert d[8].role == GUEST
+
+
+def test_flicker_of_one_frame_does_not_flip_role():
+    """Одна ошибочная оценка внешнего вида среди уверенных «гость» роль не меняет (среднее логитов за окно)."""
+    rt = RoleTracker(RolesConfig(), seat_min_s=15)
+    seq = iter([0.1] * 12 + [0.99] + [0.1] * 30)
+    d, _ = run(rt, 8, lambda ts: [PersonObs(9, STANDING_BOX, "T01", appearance=next(seq))])
+    assert d[9].role == GUEST
+
+
+def test_seated_long_but_looks_like_staff_is_unknown():
+    """Сидит за столом дольше порога (сильный признак гостя), но выглядит как официант — сигналы расходятся."""
+    rt = RoleTracker(RolesConfig(), seat_min_s=15)
+    app = _noisy_app(0.97)
+    d, _ = run(rt, 30, lambda ts: [PersonObs(3, SEATED_BOX, "T01", appearance=app())])
+    assert d[3].role == UNKNOWN and "conflict" in d[3].reasons
+
+
+def test_seated_long_uncertain_look_is_guest():
+    rt = RoleTracker(RolesConfig(), seat_min_s=15)
+    app = _noisy_app(0.5)
+    d, _ = run(rt, 30, lambda ts: [PersonObs(4, SEATED_BOX, "T01", appearance=app())])
+    assert d[4].role == GUEST
+
+
+def test_no_appearance_means_old_behaviour():
+    rt = RoleTracker(RolesConfig(), seat_min_s=15)
+    d, _ = run(rt, 8, lambda ts: [PersonObs(5, STANDING_BOX, "T01", appearance=None)])
+    assert d[5].role == UNKNOWN
