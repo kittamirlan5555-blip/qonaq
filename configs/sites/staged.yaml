@@ -1,0 +1,16 @@
+# Постановочный тест на ноутбуке (docs/STAGED_TEST.md): python -m qonaq staged-check data/videos/staged.mp4
+# Пороги боевые (SPEC §5), кроме правила «сидели до старта» — в постановке стол пуст первую минуту.
+site_id: staged
+name: Постановочный тест
+profile: restaurant
+process_fps: 4
+detector:
+  backend: auto
+  onnx_model: yolox_m        # на CPU ноутбука ~2–4 кадр/с обработки: 10 минут записи ≈ 10–20 минут прогона
+  onnx_tiles: 1
+thresholds:
+  preexisting_grace_s: 0
+  use_table_appearance: true # эталон пустого стола — первая минута записи без людей
+alerts:
+  no_waiter_s: 180
+  dirty_table_s: 300

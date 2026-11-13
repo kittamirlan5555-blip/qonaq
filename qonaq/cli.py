@@ -137,6 +137,20 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--demo", action="store_true", help="писать демо-ролик (медленнее)")
     _add_common(p)
 
+    p = sub.add_parser("record", help="запись вебкамеры/потока в файл для постановочного теста (W5)")
+    p.add_argument("--source", default="webcam:0")
+    p.add_argument("--seconds", type=float, default=600)
+    p.add_argument("--out", default="data/videos/staged.mp4")
+    p.add_argument("--rec-fps", type=float, default=15.0, help="частота записи")
+    p.add_argument("--width", type=int, default=1280)
+    p.add_argument("--height", type=int, default=720)
+    p.add_argument("--preview", action="store_true", help="окно с картинкой (q — стоп)")
+
+    p = sub.add_parser("staged-check", help="постановочный тест одной строкой: зоны, пайплайн, eval, демо (W5)")
+    p.add_argument("video")
+    p.add_argument("--gt", help="разметка (по умолчанию data/gt/<имя>.yaml)")
+    _add_common(p)
+
     dp = sub.add_parser("data", help="обучающие датасеты: index — единая схема и разбиения (W1)")
     d = dp.add_subparsers(dest="data_cmd", required=True)
     p = d.add_parser("index", help="data/datasets -> data/index/{roles,tables}.csv + summary.json")
@@ -391,6 +405,9 @@ def cmd_synth(args) -> int:
         site = _site(args)
         if not args.fps:
             site.process_fps = sc.fps
+        if not args.site:
+            # ролик начинается с пустого зала: правило «сидели до старта» (D-010) не нужно
+            site.thresholds.preexisting_grace_s = 0
         run_dir = Path(site.runs_dir) / name
         process_file(str(video), site, out=str(run_dir), mode="demo" if args.demo else "tracks", blur=True,
                      max_seconds=args.max_seconds, write_video=args.demo, snapshots=0)
@@ -411,6 +428,31 @@ def cmd_synth(args) -> int:
         print("\n" + "\n".join(lines))
         _ = format_table
     return 0
+
+
+def cmd_record(args) -> int:
+    from qonaq.sources.record import record
+
+    res = record(args.source, args.seconds, Path(args.out), fps=args.rec_fps, width=args.width,
+                 height=args.height, preview=args.preview)
+    print(f"Записано: {res['out']} — {res['seconds']} с, {res['size'][0]}x{res['size'][1]}")
+    return 0
+
+
+def cmd_staged(args) -> int:
+    from qonaq.staged import staged_check
+
+    def overrides(site):
+        base = _site(args)  # флаги --model/--fps/... поверх configs/sites/staged.yaml
+        if args.fps:
+            site.process_fps = base.process_fps
+        for k in ("backend", "onnx_model", "onnx_tiles", "model", "device", "conf", "cache_dir"):
+            if getattr(args, {"onnx_model": "model", "onnx_tiles": "tiles", "cache_dir": "det_cache"}.get(k, k), None):
+                setattr(site.detector, k, getattr(base.detector, k))
+        if args.roles_head:
+            site.roles.classifier = base.roles.classifier
+
+    return staged_check(args.video, args.gt, site_path=args.site, overrides=overrides)
 
 
 def cmd_data(args) -> int:
@@ -448,6 +490,8 @@ def cmd_train(args) -> int:
 
 
 HANDLERS = {
+    "record": cmd_record,
+    "staged-check": cmd_staged,
     "synth": cmd_synth,
     "train": cmd_train,
     "data": cmd_data,

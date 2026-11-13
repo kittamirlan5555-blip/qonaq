@@ -160,3 +160,26 @@ def test_calibration_profile_from_tracks_json(tmp_path):
         build_profile(tmp_path, [99])
     with pytest.raises(ValueError):
         build_profile(tmp_path)
+
+
+def test_role_classifier_in_pipeline_marks_waiter_staff_early(tmp_path):
+    """W2: внешний вид «персонал» у официанта → визит засчитан как подтверждённый персонал (high), а не
+    «неизвестный стоя» (low); вызовов классификатора — не чаще appearance_every_s на трек."""
+    from qonaq.roles.classifier import FakeRoleClassifier
+
+    calls = []
+
+    def fn(box):
+        calls.append(box)
+        return 0.95 if (box[3] - box[1]) / (box[2] - box[0]) > 2.5 else 0.05  # высокий bbox — официант
+
+    site = SiteConfig(site_id="t", cameras=[CameraConfig(id="cam", source="x.mp4")])
+    sc = Scenario(200, lambda t: ([GUEST_A, GUEST_B] if t >= 40 else []) + ([WAITER] if 100 <= t < 108 else []))
+    store = EventStore(tmp_path / "events.sqlite")
+    pipe = Pipeline(site, detector=sc, store=store, zones={"cam": ZONES}, sources={"cam": sc},
+                    role_classifier=FakeRoleClassifier(fn))
+    pipe.run()
+    served = [e for e in store.events() if e["type"] == "served"]
+    assert len(served) == 1 and served[0]["ts"] == pytest.approx(100, abs=2)
+    assert served[0]["payload"].get("confidence") == "high"
+    assert len(calls) < 200 * 3 / site.roles.appearance_every_s * 1.2  # ≈ 1 раз в секунду на трек, не каждый кадр

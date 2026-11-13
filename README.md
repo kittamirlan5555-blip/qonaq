@@ -12,7 +12,7 @@
 > Статус: MVP. Что реально проверено и где система ошибается — в [docs/EVAL.md](docs/EVAL.md).
 > Что готово и что показывать — в [PROGRESS.md](PROGRESS.md).
 
-## Установка (Windows и Linux)
+## Установка (Windows, Linux, macOS)
 
 Нужен Python 3.11 или 3.12.
 
@@ -50,6 +50,16 @@ CUDA-сборку PyTorch с pytorch.org). Если он установлен, �
 ```bash
 pip install -e ".[yolo]"
 ```
+
+### macOS (MacBook M1/M2/M3)
+
+Ставится так же (`python3 -m venv .venv`, `source .venv/bin/activate`, `pip install -e ".[dev]"`);
+onnxruntime и OpenCV имеют сборки под Apple Silicon. Вебкамера открывается через AVFoundation.
+**Разрешение на камеру:** при первом запуске `record`/`live` macOS спросит доступ для приложения терминала
+(Terminal / iTerm / VS Code). Если окно не появилось или кадр чёрный — Системные настройки →
+Конфиденциальность и безопасность → Камера → включить для этого приложения и **перезапустить терминал**.
+Встроенная камера — `webcam:0`; iPhone через Continuity Camera может быть `webcam:1`.
+Проверено только по коду: в облачных сессиях macOS и камеры нет (см. docs/EVAL.md).
 
 ## 5 команд для старта
 
@@ -106,6 +116,11 @@ python -m qonaq live --site configs/sites/demo_file_as_stream.yaml
 | `python -m qonaq live --site <yaml>` | поток + веб-панель + алерты |
 | `python -m qonaq eval <папка прогона>` | сверка событий с ручной разметкой |
 | `python scripts/run_all.py` | всё сразу на всех видео из `data/videos/` |
+| `python -m qonaq record --source webcam:0 --seconds 660` | запись вебкамеры для постановочного теста |
+| `python -m qonaq staged-check data/videos/staged.mp4` | постановочный тест одной строкой (docs/STAGED_TEST.md) |
+| `python -m qonaq synth` | синтетические ролики по сценариям `configs/synth/*.yaml` + прогон + eval |
+| `python scripts/fetch_datasets.py` → `python -m qonaq data index` | обучающие датасеты, единая схема |
+| `python -m qonaq train roles` / `train tables` | оценка и обучение голов «персонал/гость», «чистый/грязный» |
 
 Общие флаги: `--fps 3` (кадров в секунду), `--model yolox_m --tiles 2` (точнее, но в ~6 раз медленнее),
 `--site configs/sites/x.yaml` (пороги, средний чек), `--max-seconds 30`.

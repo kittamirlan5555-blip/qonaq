@@ -116,7 +116,9 @@ class VideoSource:
     # ------------------------------------------------------------------ open/close
     def _default_opener(self):
         if self.kind == "webcam":
-            cap = cv2.VideoCapture(int(self.target))
+            from qonaq.sources.record import open_webcam  # AVFoundation на macOS, DirectShow на Windows
+
+            cap = open_webcam(int(self.target))
         else:
             cap = cv2.VideoCapture(str(self.target))
         if self.kind != "file":

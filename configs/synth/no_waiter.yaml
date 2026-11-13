@@ -31,7 +31,7 @@ zones:
 actors:
 - id: g1
   kind: guest
-  sprite: 3
+  sprite: 13
   path:
   - t: 0
     at: &id001 [760, 425]
@@ -42,7 +42,7 @@ actors:
   - {t: 15, at: T1, pose: sit, seat: 0}
 - id: g2
   kind: guest
-  sprite: 11
+  sprite: 31
   path:
   - t: 0
     at: *id001
@@ -53,7 +53,7 @@ actors:
   - {t: 15, at: T1, pose: sit, seat: 1}
 - id: w1
   kind: staff
-  sprite: 0
+  sprite: 9
   path:
   - t: 0
     at: *id001
