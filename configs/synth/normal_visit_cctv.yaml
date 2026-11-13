@@ -1,0 +1,93 @@
+name: normal_visit_cctv
+description: 'Обычный визит на медианном кадре реального CCTV (угол ресторана): «стол» — скамья у входа.'
+background: {video: data/videos/cctv_restaurant_corner.mp4, mode: median}
+fps: 2
+duration_s: 430
+sit_h: 210
+stand_h: 340
+staff_venue: C
+guest_venues: [C, B]
+zones:
+- id: T1
+  polygon:
+  - [500, 230]
+  - [990, 230]
+  - [990, 700]
+  - [500, 700]
+  seats:
+  - [620, 520]
+  - [780, 530]
+  - [905, 640]
+actors:
+- id: g1
+  kind: guest
+  sprite: 13
+  path:
+  - t: 0
+    at: &id002 [1300, 1075]
+    visible: false
+  - t: 14
+    at: &id001 [1000, 1000]
+    pose: stand
+  - {t: 20, at: T1, pose: sit, seat: 0}
+  - t: 305
+    at: *id001
+    pose: stand
+  - t: 306
+    at: *id002
+    visible: false
+- id: g2
+  kind: guest
+  sprite: 31
+  path:
+  - t: 0
+    at: *id002
+    visible: false
+  - t: 14
+    at: *id001
+    pose: stand
+  - {t: 20, at: T1, pose: sit, seat: 1}
+  - t: 305
+    at: *id001
+    pose: stand
+  - t: 306
+    at: *id002
+    visible: false
+- id: w1
+  kind: staff
+  sprite: 9
+  path:
+  - t: 0
+    at: *id002
+    visible: false
+  - t: 74
+    at: *id001
+    pose: stand
+  - {t: 80, at: T1, pose: stand, seat: 2}
+  - t: 105
+    at: *id001
+    pose: stand
+  - t: 106
+    at: *id002
+    visible: false
+  - t: 194
+    at: *id001
+    pose: stand
+  - {t: 200, at: T1, pose: stand, seat: 2}
+  - t: 220
+    at: *id001
+    pose: stand
+  - t: 221
+    at: *id002
+    visible: false
+  - t: 339
+    at: *id001
+    pose: stand
+  - {t: 345, at: T1, pose: stand, seat: 2}
+  - t: 370
+    at: *id001
+    pose: stand
+  - t: 371
+    at: *id002
+    visible: false
+alerts_forbidden: [no_waiter, dirty_table]
