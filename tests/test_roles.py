@@ -205,3 +205,14 @@ def test_guest_standing_up_keeps_history():
     sid = d[1].stable_id
     d = rt.update(t, [PersonObs(1, (100.0, 20.0, 160.0, 180.0), "T01", h)])  # встал: та же одежда
     assert d[1].stable_id == sid and d[1].role == GUEST
+
+
+def test_reappearing_track_id_does_not_share_stable_id_with_heir():
+    """ByteTrack: гость (id 1) пропал → новый id 2 рядом унаследовал его историю и стабильный id 1; затем id 1
+    вернулся на ДРУГОМ человеке. Стабильные id должны различаться, иначе логика сочтёт их одним человеком."""
+    rt = RoleTracker(seat_min_s=15)
+    _, t = run(rt, 30, lambda ts: [PersonObs(1, SEATED_BOX, "T01")])
+    d = rt.update(t + 0.5, [PersonObs(2, SEATED_BOX, "T01")])
+    assert d[2].stable_id == 1
+    d = rt.update(t + 1.0, [PersonObs(2, SEATED_BOX, "T01"), PersonObs(1, STANDING_BOX, "T01")])
+    assert d[1].stable_id != d[2].stable_id

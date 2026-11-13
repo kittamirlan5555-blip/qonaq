@@ -98,6 +98,14 @@ class RoleTracker:
             return None
         return self._tracks.pop(best)
 
+    def _free_sid(self, track_id: int) -> int:
+        """Стабильный id нового трека: его id трекера, если этот номер уже не носит другой (унаследованный) трек.
+        Иначе два человека получили бы один стабильный id и логика стола считала бы их одним."""
+        if any(st.stable_id == track_id for st in self._tracks.values()):
+            self._next_sid += 1
+            return self._next_sid
+        return track_id
+
     def _identity_jump(self, st: _TrackState, p: PersonObs) -> bool:
         """Резкая смена пропорций рамки И другая одежда (гистограмма торса) → другой человек.
         Гость, вставший из-за стола, меняет пропорции, но не одежду — его история сохраняется."""
@@ -122,7 +130,7 @@ class RoleTracker:
             st = self._tracks.get(p.track_id)
             if st is None:
                 st = self._inherit(p, ts, present) or _TrackState(first_ts=ts, last_ts=ts, xyxy=p.xyxy,
-                                                                   stable_id=p.track_id)
+                                                                   stable_id=self._free_sid(p.track_id))
                 self._tracks[p.track_id] = st
             elif self._identity_jump(st, p):
                 # Трекер перекинул id на другого человека (официант подошёл и перекрыл гостя): рамка резко
