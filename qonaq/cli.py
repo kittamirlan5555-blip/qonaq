@@ -151,6 +151,32 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--gt", help="разметка (по умолчанию data/gt/<имя>.yaml)")
     _add_common(p)
 
+    cp = sub.add_parser("calibrate", help="калибровка «персонал/гость» под зал: collect | review | train | promote | "
+                                          "rollback | status | curve (W6)")
+    c = cp.add_subparsers(dest="cal_cmd", required=True)
+    p = c.add_parser("collect", help="прогон записи зала -> кропы (с блюром) + признаки + авторазметка")
+    p.add_argument("video")
+    p.add_argument("--site-id", required=True)
+    p.add_argument("--guest-min-s", type=float, default=300, help="сидел в зоне стола не меньше — уверенный гость")
+    p.add_argument("--staff-min-tables", type=int, default=3, help="стоя у стольких столов — уверенный персонал")
+    p.add_argument("--every-s", type=float, default=2.0, help="как часто брать кроп трека")
+    _add_common(p)
+    p = c.add_parser("review", help="локальная страница проверки неуверенных кропов")
+    p.add_argument("--site-id", required=True)
+    p.add_argument("--port", type=int, default=8010)
+    p = c.add_parser("train", help="новая голова зала: общие датасеты + кропы зала; «было → стало»")
+    p.add_argument("--site-id", required=True)
+    p.add_argument("--with-general", action="store_true", help="подмешать общие датасеты (по умолчанию нет, D-022)")
+    p = c.add_parser("promote", help="включить версию головы (по умолчанию последнюю)")
+    p.add_argument("--site-id", required=True)
+    p.add_argument("--version", type=int)
+    p = c.add_parser("rollback", help="вернуть прошлую включённую версию")
+    p.add_argument("--site-id", required=True)
+    p = c.add_parser("status", help="версии и какая включена")
+    p.add_argument("--site-id", required=True)
+    p = c.add_parser("curve", help="кривая «n размеченных кропов -> точность» на отложенных залах W2")
+    p.add_argument("--ns", default="0,25,50,100,300")
+
     dp = sub.add_parser("data", help="обучающие датасеты: index — единая схема и разбиения (W1)")
     d = dp.add_subparsers(dest="data_cmd", required=True)
     p = d.add_parser("index", help="data/datasets -> data/index/{roles,tables}.csv + summary.json")
@@ -455,6 +481,58 @@ def cmd_staged(args) -> int:
     return staged_check(args.video, args.gt, site_path=args.site, overrides=overrides)
 
 
+def cmd_calibrate(args) -> int:
+    import json
+
+    from qonaq.calib import store
+
+    sid = getattr(args, "site_id", None)
+    if args.cal_cmd == "collect":
+        from qonaq.calib.collect import collect
+
+        res = collect(args.video, _site(args), sid, every_s=args.every_s, guest_min_s=args.guest_min_s,
+                      staff_min_tables=args.staff_min_tables, max_seconds=args.max_seconds)
+        print(json.dumps(res, ensure_ascii=False, indent=1))
+        print(f"Дальше: python -m qonaq calibrate review --site-id {sid}")
+        return 0
+    if args.cal_cmd == "review":
+        from qonaq.calib.review import serve
+
+        serve(sid, port=args.port)
+        return 0
+    if args.cal_cmd == "train":
+        from qonaq.calib.train import format_report, train_site
+
+        print(format_report(train_site(sid, use_general_data=args.with_general)))
+        return 0
+    if args.cal_cmd == "promote":
+        v = store.promote(sid, args.version)
+        print(f"Включена v{v}: {store.active_path(sid)}. В конфиге объекта: roles.classifier: "
+              f"models/site/{sid}/active.npz")
+        return 0
+    if args.cal_cmd == "rollback":
+        v = store.rollback(sid)
+        print(f"Включена v{v}" if v else "Голова зала выключена (active.npz удалён) — роли по поведению/общей голове")
+        return 0
+    if args.cal_cmd == "status":
+        print(json.dumps({"versions": store.versions(sid), "active": store.active_version(sid),
+                          "history": store.history(sid)}, ensure_ascii=False, indent=1))
+        return 0
+    if args.cal_cmd == "curve":
+        from qonaq.calib.train import calibration_curve, curve_markdown
+        from qonaq.train.featcache import extract
+
+        f = {"mnv2": extract(Path("data/index/roles.csv"), "mnv2", Path("data/features"))}
+        c = calibration_curve(f, ns=tuple(int(x) for x in args.ns.split(",")))
+        out = Path("runs/train")
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "calib_curve.json").write_text(json.dumps(c, indent=1, default=float), encoding="utf-8")
+        (out / "calib_curve.md").write_text(curve_markdown(c), encoding="utf-8")
+        print(curve_markdown(c))
+        return 0
+    return 1
+
+
 def cmd_data(args) -> int:
     import json
 
@@ -490,6 +568,7 @@ def cmd_train(args) -> int:
 
 
 HANDLERS = {
+    "calibrate": cmd_calibrate,
     "record": cmd_record,
     "staged-check": cmd_staged,
     "synth": cmd_synth,
