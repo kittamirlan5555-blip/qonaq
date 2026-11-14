@@ -39,9 +39,16 @@ class LiveService:
                                       confident_only=site.alerts.confident_only, store=self.store)
         # W7: монитор здоровья + сводка владельцу системы (отдельный чат)
         from qonaq.health.daily import FrameSampler
-        from qonaq.health.monitor import HealthMonitor
+        from qonaq.health.monitor import HealthConfig, HealthMonitor
+        from qonaq.health.proc import CpuMeter
 
-        self.health = HealthMonitor()
+        self.health = HealthMonitor(HealthConfig(stale_s=site.health.camera_stale_s))
+        for c in site.cameras:
+            self.health.register(c.id)
+        self._outages_seen: dict[str, int] = {}
+        self._cpu = CpuMeter()
+        self._last_stats_wall = time.time()
+        self.perf: dict[str, Any] = {}
         self.sampler = FrameSampler(site.health.sample_every_s)
         self.owner = sender_from_env(site.health.owner_chat_env) if use_env_sender else None
         self._issue_sent: dict[tuple, float] = {}
@@ -141,6 +148,17 @@ class LiveService:
                     self.owner.send(f"🛠 {self.site.name} · {i['camera_id']}: {i['message']}")
                 except Exception as e:  # noqa: BLE001
                     log.warning("сводка/проблема владельцу не отправлена: %s", e)
+        for cid, cst in st["cameras"].items():  # камера вернулась после обрыва — сообщить один раз
+            n = cst.get("outages", 0)
+            if n > self._outages_seen.get(cid, 0):
+                self._outages_seen[cid] = n
+                msg = f"камера снова работает (не было {cst['last_outage']['s']:.0f} с)"
+                log.warning("ЗДОРОВЬЕ %s: %s", cid, msg)
+                if self.owner is not None:
+                    try:
+                        self.owner.send(f"🛠 {self.site.name} · {cid}: {msg}")
+                    except Exception as e:  # noqa: BLE001
+                        log.warning("сообщение владельцу не отправлено: %s", e)
         lt = self._local_now()
         if due(lt, self.site.health.daily_at, self._daily_day):
             self._daily_day = time.strftime("%Y-%m-%d", lt)
@@ -152,17 +170,55 @@ class LiveService:
                     log.warning("ежедневная сводка не отправлена: %s", e)
         return st
 
+    def perf_tick(self) -> dict[str, Any]:
+        """Строка live-статистики (S1): fps и задержка по камерам за окно, переподключения, CPU, RSS."""
+        import json
+
+        from qonaq.health.proc import rss_mb
+
+        now = time.time()
+        window = max(1.0, now - self._last_stats_wall)
+        self._last_stats_wall = now
+        cams = {}
+        for cid, src in self.pipeline.sources.items():
+            cs = self.pipeline.stats.cams.get(cid)
+            row = cs.window(now, window) if cs else {"fps": 0.0, "latency_ms_avg": None, "latency_ms_p95": None}
+            row.update({"frames": cs.frames if cs else 0, "reconnects": getattr(src, "reconnects", 0),
+                        "connected": getattr(src, "connected", True)})
+            cams[cid] = row
+        rss, kind = rss_mb()
+        line = {"wall": round(now, 1), "uptime_s": round(now - self.started_wall, 1), "window_s": round(window, 1),
+                "cpu_pct": self._cpu.sample(), "rss_mb": round(rss, 1) if rss is not None else None,
+                "rss_kind": kind, "threads": threading.active_count(), "cameras": cams,
+                "alerts_pending": self.alerts.pending(),
+            "perf": self.perf, "events_pending": self.writer.pending()}
+        self.perf = line
+        with (self.run_dir / "live_stats.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps(line, ensure_ascii=False) + "\n")
+        return line
+
     def _health_loop(self) -> None:
-        while not self._stop.wait(self.site.health.check_every_s):
-            try:
-                self.health_tick()
-            except Exception:  # noqa: BLE001
-                log.exception("монитор здоровья")
+        next_health = time.time() + self.site.health.check_every_s
+        next_stats = time.time() + self.site.health.stats_every_s
+        while not self._stop.wait(1.0):
+            now = time.time()
+            if self.site.health.stats_every_s > 0 and now >= next_stats:
+                next_stats = now + self.site.health.stats_every_s
+                try:
+                    self.perf_tick()
+                except Exception:  # noqa: BLE001
+                    log.exception("live-статистика")
+            if self.site.health.enabled and now >= next_health:
+                next_health = now + self.site.health.check_every_s
+                try:
+                    self.health_tick()
+                except Exception:  # noqa: BLE001
+                    log.exception("монитор здоровья")
 
     def start(self) -> LiveService:
         self._thread = threading.Thread(target=self._run, name="pipeline", daemon=True)
         self._thread.start()
-        if self.site.health.enabled:
+        if self.site.health.enabled or self.site.health.stats_every_s > 0:
             self._health_thread = threading.Thread(target=self._health_loop, name="health", daemon=True)
             self._health_thread.start()
         from qonaq.alerts.telegram import FeedbackPoller, TelegramSender
@@ -177,6 +233,10 @@ class LiveService:
             self._feedback.stop()
         if self._thread is not None:
             self._thread.join(timeout=15)
+        try:
+            self.perf_tick()  # последняя строка live-статистики
+        except Exception:  # noqa: BLE001
+            pass
         try:
             (self.run_dir / "health.json").write_text(__import__("json").dumps(
                 self.health.status(live=False), ensure_ascii=False, indent=1), encoding="utf-8")
@@ -216,6 +276,7 @@ class LiveService:
             "alerts_held_back": self.alerts.held_back,
             "health": self.health.status(live=True)["status"],
             "alerts_pending": self.alerts.pending(),
+            "perf": self.perf,
             "time_base": self.time_base,
             "fps": round(stats.frames / elapsed, 2),
             "running": not self.finished.is_set(),

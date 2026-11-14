@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -209,11 +210,38 @@ class CameraRuntime:
 
 
 @dataclass
+class CamStats:
+    """Счётчики одной камеры для live-статистики (S1): кадры, задержка «кадр пришёл → обработан»."""
+
+    frames: int = 0
+    latency_sum: float = 0.0
+    latency_max: float = 0.0
+    recent: deque = field(default_factory=lambda: deque(maxlen=300))  # (wall, latency)
+
+    def add(self, wall: float, latency: float | None) -> None:
+        self.frames += 1
+        if latency is not None:
+            self.latency_sum += latency
+            self.latency_max = max(self.latency_max, latency)
+            self.recent.append((wall, latency))
+
+    def window(self, now: float, window_s: float) -> dict[str, float]:
+        lat = [x[1] for x in self.recent if x[0] >= now - window_s]
+        lat_sorted = sorted(lat)
+        return {
+            "fps": round(len(lat) / window_s, 2),
+            "latency_ms_avg": round(1000 * sum(lat) / len(lat), 1) if lat else None,
+            "latency_ms_p95": round(1000 * lat_sorted[int(0.95 * (len(lat_sorted) - 1))], 1) if lat else None,
+        }
+
+
+@dataclass
 class PipelineStats:
     frames: int = 0
     wall_s: float = 0.0
     detect_s: float = 0.0
     scene_s: float = 0.0
+    cams: dict[str, CamStats] = field(default_factory=dict)
 
     @property
     def fps(self) -> float:
@@ -277,13 +305,25 @@ class Pipeline:
     def step(self) -> list[FrameResult] | None:
         """Один проход по всем камерам. None — все источники закончились."""
         batch: list[tuple[str, np.ndarray, float]] = []
+        streams = False
         for cam_id in list(self._active):
-            item = self.sources[cam_id].read()
+            src = self.sources[cam_id]
+            if getattr(src, "kind", "file") != "file":
+                # Потоки — неблокирующе: пропавшая камера не останавливает остальные (S1).
+                streams = True
+                item = src.poll()
+                if item is not None:
+                    batch.append((cam_id, item[0], item[1]))
+                continue
+            item = src.read()
             if item is None:
                 self._active.discard(cam_id)
                 continue
             batch.append((cam_id, item[0], item[1]))
         if not batch:
+            if streams:
+                time.sleep(0.01)
+                return []
             return None
         t0 = time.perf_counter()
         dets = self.detector.detect([b[1] for b in batch])
@@ -294,6 +334,10 @@ class Pipeline:
             results.append(res)
             if self.store is not None and res.events:
                 self.store.add(res.events)
+            now = time.time()
+            # Задержка имеет смысл только для потоков: там ts — время получения кадра (wall clock).
+            lat = now - ts if getattr(self.sources[cam_id], "kind", "file") != "file" else None
+            self.stats.cams.setdefault(cam_id, CamStats()).add(now, lat)
         self.stats.frames += len(batch)
         return results
 

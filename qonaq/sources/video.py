@@ -57,6 +57,24 @@ def backoff_delays(base: float = 1.0, factor: float = 2.0, max_delay: float = 30
         d *= factor
 
 
+def open_stream(url: str, timeout_s: float = 10.0):
+    """RTSP/HTTP-поток через FFmpeg-бэкенд OpenCV: TCP-транспорт и таймауты открытия/чтения.
+
+    Без таймаутов OpenCV на мёртвом регистраторе висит в read() ~30 с и дольше. TCP вместо UDP — меньше
+    рассыпающихся кадров через коммутаторы/Wi-Fi. Переопределяется переменной OPENCV_FFMPEG_CAPTURE_OPTIONS.
+    """
+    import os
+
+    if url.lower().startswith("rtsp") and "OPENCV_FFMPEG_CAPTURE_OPTIONS" not in os.environ:
+        os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+    ms = int(timeout_s * 1000)
+    try:
+        return cv2.VideoCapture(url, cv2.CAP_FFMPEG,
+                                [cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, ms, cv2.CAP_PROP_READ_TIMEOUT_MSEC, ms])
+    except (cv2.error, TypeError, AttributeError):  # старый OpenCV без параметров открытия
+        return cv2.VideoCapture(url)
+
+
 def probe(path: str | Path) -> SourceInfo:
     cap = cv2.VideoCapture(str(path))
     try:
@@ -86,6 +104,7 @@ class VideoSource:
         opener=None,
         sleep=time.sleep,
         clock=time.time,
+        timeout_s: float = 10.0,
     ):
         self.spec = spec
         self.kind, self.target = parse_source(spec)
@@ -112,6 +131,9 @@ class VideoSource:
         self._latest: tuple[Frame, float] | None = None
         self._stop = threading.Event()
         self._last_emit = 0.0
+        self.frames_received = 0
+        self.last_frame_wall: float | None = None
+        self.timeout_s = timeout_s
 
     # ------------------------------------------------------------------ open/close
     def _default_opener(self):
@@ -119,6 +141,8 @@ class VideoSource:
             from qonaq.sources.record import open_webcam  # AVFoundation на macOS, DirectShow на Windows
 
             cap = open_webcam(int(self.target))
+        elif self.kind == "stream":
+            cap = open_stream(str(self.target), self.timeout_s)
         else:
             cap = cv2.VideoCapture(str(self.target))
         if self.kind != "file":
@@ -134,8 +158,8 @@ class VideoSource:
                 raise OSError(f"не удалось открыть видео: {self.target}")
             self._read_info(self._cap)
         else:
-            self._connect_with_retries(first=True)
-            self._thread = threading.Thread(target=self._reader_loop, name=f"src-{self.kind}", daemon=True)
+            # Подключение — в фоновом потоке: недоступная при старте камера не держит остальные (S1).
+            self._thread = threading.Thread(target=self._reader_main, name=f"src-{self.kind}", daemon=True)
             self._thread.start()
         return self
 
@@ -174,14 +198,22 @@ class VideoSource:
                 self._read_info(cap)
                 if not first:
                     self.reconnects += 1
-                    log.info("источник %s: переподключено", mask_secrets(self.spec))
+                    log.info("источник %s: переподключено", mask_secrets(str(self.target)))
                 return True
             if cap is not None:
                 cap.release()
-            log.warning("источник %s недоступен, повтор через %.0f с", mask_secrets(self.spec), delay)
+            log.warning("источник %s недоступен, повтор через %.0f с", mask_secrets(str(self.target)), delay)
             if self._stop.wait(delay) if self._sleep is time.sleep else self._sleep(delay):
                 return False
         return False
+
+    def _reader_main(self) -> None:
+        if self._connect_with_retries(first=True):
+            self._reader_loop()
+
+    @property
+    def connected(self) -> bool:
+        return self._cap is not None
 
     def _reader_loop(self) -> None:
         fails = 0
@@ -190,7 +222,7 @@ class VideoSource:
             if not ok or frame is None:
                 fails += 1
                 if fails >= 10:
-                    log.warning("источник %s: поток оборвался", mask_secrets(self.spec))
+                    log.warning("источник %s: поток оборвался", mask_secrets(str(self.target)))
                     if self._cap is not None:
                         self._cap.release()
                         self._cap = None
@@ -201,8 +233,27 @@ class VideoSource:
                     time.sleep(0.05)
                 continue
             fails = 0
+            now = self._clock()
             with self._lock:
-                self._latest = (frame, self._clock())
+                self._latest = (frame, now)
+                self.frames_received += 1
+                self.last_frame_wall = now
+
+    def poll(self) -> tuple[Frame, float] | None:
+        """Неблокирующее чтение потока: свежий кадр, если он есть и пора (process_fps), иначе None сразу.
+
+        Для файлов то же, что read(). Нужен многокамерному циклу: пропавшая камера не держит остальные.
+        """
+        if self.kind == "file":
+            return self._read_file()
+        now = self._clock()
+        if now < self._last_emit + 1.0 / self.process_fps:
+            return None
+        with self._lock:
+            item, self._latest = self._latest, None
+        if item is not None:
+            self._last_emit = now
+        return item
 
     def _read_stream(self) -> tuple[Frame, float] | None:
         period = 1.0 / self.process_fps
@@ -220,7 +271,7 @@ class VideoSource:
                 return item
             if now > deadline:
                 deadline = now + 30.0
-                log.warning("источник %s: нет кадров 30 с", mask_secrets(self.spec))
+                log.warning("источник %s: нет кадров 30 с", mask_secrets(str(self.target)))
             time.sleep(0.01)
         return None
 

@@ -1,0 +1,33 @@
+# 4 «камеры» по RTSP с эмулятора регистратора (SPRINT2 S1): ролики data/videos по кругу, логин/пароль.
+#   1) python scripts/emulate_cameras.py                 (оставить работать; Ctrl+C — остановить)
+#   2) python -m qonaq live --site configs/sites/rtsp_emulated.yaml
+# Пароль — из .env (QONAQ_NVR_PASSWORD), по умолчанию пароль эмулятора. Пути — как у настоящих регистраторов:
+# Hikvision /Streaming/Channels/<канал>02 (субпоток), Dahua /cam/realmonitor?channel=1&subtype=1.
+# Ролики короткие (8–90 с) и идут по кругу — события на них не «настоящие»; это проверка связи, нагрузки и обрывов.
+site_id: rtsp_emulated
+name: Эмуляция регистратора (4 камеры)
+profile: restaurant
+process_fps: 2
+cameras:
+  - id: cctv_restaurant_corner
+    name: Зал, угол (Hikvision 102)
+    source: rtsp://${QONAQ_NVR_USER:-admin}:${QONAQ_NVR_PASSWORD:-qonaq12345}@${QONAQ_NVR_IP:-127.0.0.1}:8554/Streaming/Channels/102
+    zones: configs/zones/cctv_restaurant_corner.yaml
+  - id: cctv_terrace_cafe
+    name: Веранда (Hikvision 202)
+    source: rtsp://${QONAQ_NVR_USER:-admin}:${QONAQ_NVR_PASSWORD:-qonaq12345}@${QONAQ_NVR_IP:-127.0.0.1}:8554/Streaming/Channels/202
+    zones: configs/zones/cctv_terrace_cafe.yaml
+  - id: topdown_cafe_people
+    name: Кафе сверху (Hikvision 302)
+    source: rtsp://${QONAQ_NVR_USER:-admin}:${QONAQ_NVR_PASSWORD:-qonaq12345}@${QONAQ_NVR_IP:-127.0.0.1}:8554/Streaming/Channels/302
+    zones: configs/zones/topdown_cafe_people.yaml
+  - id: foodcourt_preannotated
+    name: Фудкорт (Dahua)
+    source: rtsp://${QONAQ_NVR_USER:-admin}:${QONAQ_NVR_PASSWORD:-qonaq12345}@${QONAQ_NVR_IP:-127.0.0.1}:8554/cam/realmonitor?channel=1&subtype=1
+    zones: configs/zones/foodcourt_preannotated.yaml
+detector:
+  onnx_model: yolox_tiny
+  onnx_tiles: 1
+health:
+  check_every_s: 20
+  stats_every_s: 60

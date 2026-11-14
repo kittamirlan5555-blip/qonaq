@@ -281,6 +281,9 @@ class AsyncEventWriter:
 
                 logging.getLogger("qonaq.events").exception("ошибка записи событий")
 
+    def pending(self) -> int:
+        return self._q.qsize()
+
     def close(self) -> None:
         self._q.put(None)
         self._thread.join(timeout=10)

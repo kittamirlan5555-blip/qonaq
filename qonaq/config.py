@@ -185,6 +185,8 @@ class HealthSettings(_Model):
     daily_frames: int = 5
     sample_every_s: float = 600.0  # как часто откладывать кадр (с блюром) для сводки
     repeat_issue_s: float = 3600.0  # одну и ту же проблему не присылать чаще
+    camera_stale_s: float = 30.0  # нет кадров дольше — «камера не отвечает»
+    stats_every_s: float = 60.0  # строка в live_stats.jsonl: fps и задержка по камерам, CPU, память (S1)
 
 
 class SiteConfig(_Model):
@@ -221,12 +223,17 @@ class SiteConfig(_Model):
         raise KeyError(camera_id)
 
 
-_ENV_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+_ENV_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 
 
 def expand_env(value: str) -> str:
-    """Подставляет ${VAR} из окружения (.env). Неизвестные переменные остаются как есть."""
-    return _ENV_RE.sub(lambda m: os.environ.get(m.group(1), m.group(0)), value)
+    """Подставляет ${VAR} и ${VAR:-по_умолчанию} из окружения (.env). Неизвестные без умолчания остаются как есть."""
+    def _sub(m: re.Match) -> str:
+        if m.group(1) in os.environ:
+            return os.environ[m.group(1)]
+        return m.group(2) if m.group(2) is not None else m.group(0)
+
+    return _ENV_RE.sub(_sub, value)
 
 
 def load_dotenv_if_any(root: Path | None = None) -> None:

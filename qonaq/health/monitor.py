@@ -56,6 +56,7 @@ class Issue:
 
 MESSAGES = {
     "camera_down": "камера не отвечает {s:.0f} с",
+    "camera_recovered": "камера снова работает (не было {s:.0f} с)",
     "dark_frame": "кадр тёмный {s:.0f} с (свет выключен или камера закрыта)",
     "frozen_frame": "кадр не меняется {s:.0f} с (поток завис?)",
     "flapping": "стол {zone} переключался {n} раз за час — проверьте зону",
@@ -81,6 +82,8 @@ class _Cam:
         self.seated = 0
         self.visits = 0
         self.seated_ts: dict[str, float] = {}
+        self.outages: list[tuple[float, float]] = []  # (начало, конец) по wall clock — уже закончившиеся обрывы
+        self.frames = 0
 
 
 class HealthMonitor:
@@ -91,9 +94,19 @@ class HealthMonitor:
         self.flip_counts: dict[str, int] = defaultdict(int)
 
     # ------------------------------------------------------------------ входы
+    def register(self, camera_id: str) -> None:
+        """Камера ожидается: если от неё не придёт ни одного кадра за stale_s — это тоже camera_down."""
+        c = self._cams[camera_id]
+        if c.last_wall is None:
+            c.last_wall = self.clock()
+
     def observe_frame(self, camera_id: str, ts: float, frame: np.ndarray | None) -> None:
         c = self._cams[camera_id]
-        c.last_wall = self.clock()
+        now = self.clock()
+        if c.last_wall is not None and now - c.last_wall > self.cfg.stale_s:
+            c.outages.append((c.last_wall, now))  # камера вернулась после обрыва — запоминаем эпизод
+        c.last_wall = now
+        c.frames += 1
         c.first_ts = ts if c.first_ts is None else c.first_ts
         c.last_ts = ts
         if frame is None:
@@ -194,8 +207,11 @@ class HealthMonitor:
     def status(self, live: bool = True) -> dict[str, Any]:
         issues = self.check(live)
         sev = "error" if any(i.severity == "error" for i in issues) else ("warn" if issues else "ok")
-        cams = {cid: {"last_ts": round(c.last_ts, 1), "seated": c.seated, "visits": c.visits,
-                      "unknown_share": round(sum(x[1] for x in c.roles) / max(1, sum(x[2] for x in c.roles)), 3)}
+        cams = {cid: {"last_ts": round(c.last_ts, 1), "seated": c.seated, "visits": c.visits, "frames": c.frames,
+                      "unknown_share": round(sum(x[1] for x in c.roles) / max(1, sum(x[2] for x in c.roles)), 3),
+                      "outages": len(c.outages), "down_s_total": round(sum(b - a for a, b in c.outages), 1),
+                      "last_outage": ({"start": round(c.outages[-1][0], 1), "end": round(c.outages[-1][1], 1),
+                                       "s": round(c.outages[-1][1] - c.outages[-1][0], 1)} if c.outages else None)}
                 for cid, c in self._cams.items()}
         return {"status": sev, "issues": [i.to_dict() for i in issues], "cameras": cams}
 
