@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Qonaq Vision — бильярдная, одна страница</title>
+<style>
+  @page { size: A4; margin: 14mm 14mm 12mm; }
+  :root { --ink: #1d232b; --muted: #5b6573; --line: #dfe3e8; --accent: #0f766e; --soft: #eef6f5; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #fff; color: var(--ink); font: 10.5pt/1.45 "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+  .page { max-width: 182mm; margin: 0 auto; padding: 16px; }
+  header { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 2px solid var(--accent); padding-bottom: 6px; }
+  .brand { font-weight: 700; font-size: 13pt; color: var(--accent); letter-spacing: .02em; }
+  .city { color: var(--muted); font-size: 9pt; }
+  h1 { font-size: 19pt; line-height: 1.2; margin: 12px 0 4px; }
+  .lead { font-size: 11pt; color: var(--muted); margin: 0 0 10px; }
+  h2 { font-size: 11.5pt; margin: 14px 0 6px; color: var(--accent); }
+  .states { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0 2px; }
+  .chip { border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; font-size: 9pt; }
+  .c1 { border-color: #9ad6a5; } .c2 { border-color: #f2c26b; } .c3 { border-color: #93c5fd; } .c4 { border-color: #f4a3a3; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .card { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  ul { margin: 4px 0; padding-left: 18px; } li { margin: 2px 0; }
+  .tg { background: var(--soft); border-radius: 8px; padding: 6px 10px; font-family: Consolas, "DejaVu Sans Mono", monospace; font-size: 8.8pt; white-space: pre-wrap; margin: 6px 0 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 9.5pt; }
+  th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  .note { font-size: 8.8pt; color: var(--muted); border-left: 3px solid var(--line); padding-left: 8px; margin-top: 10px; }
+  footer { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 6px; font-size: 9pt; color: var(--muted); display: flex; justify-content: space-between; }
+  @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } h1 { font-size: 16pt; } }
+  @media print { .page { padding: 0; } }
+</style>
+</head>
+<body>
+<div class="page">
+  <header><span class="brand">QONAQ VISION</span><span class="city">для бильярдных клубов</span></header>
+
+  <h1>Сколько часов игры проходит мимо счётчика</h1>
+  <p class="lead">Небольшой компьютер подключается к камерам и регистратору, которые в клубе и так стоят.
+  Он смотрит на сукно каждого стола и видит, когда на нём реально играют — по движению шаров, а не по людям
+  рядом. Каждый день эти часы сверяются с выгрузкой из программы учёта.</p>
+  <div class="states"><span class="chip c1">свободен</span><span class="chip c3">игра</span>
+  <span class="chip c2">пауза</span><span class="chip c4">играют, а сессии в учёте нет</span></div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Что вы получаете</h2>
+      <ul>
+        <li><b>Сверку смены в Telegram</b> — после выгрузки из программы учёта.</li>
+        <li><b>Отчёт владельцу</b>: по каждому столу часы игры по видео и оплаченные, расхождения с точным
+        временем — чтобы проверить по записи регистратора.</li>
+        <li><b>Панель в браузере</b>: какие столы сейчас в игре и сколько идёт сессия.</li>
+      </ul>
+      <div class="tg">Сверка с учётом — 14.11
+• Игра без счётчика: 2, 2 ч 10 мин ≈ 5 400 ₸
+   Стол 4, 21:10–22:40 (1 ч 30 мин) — по учёту не оплачено
+• Играли дольше оплаченного: 3, 45 мин ≈ 1 900 ₸
+• Счётчик шёл, стол пустой (в пользу гостя): 15 мин</div>
+    </div>
+    <div class="card">
+      <h2>Приватность и тон</h2>
+      <ul>
+        <li>Видео <b>не уходит</b> из клуба: считается на месте, наружу — только цифры.</li>
+        <li><b>Лиц не распознаём</b>, людей не узнаём: камера видит «на столе 4 катятся шары», а не «кто играет».</li>
+        <li>Отчёт показывает <b>расхождение видео и учёта</b>, а не «кто виноват»: часы кассы уходят, сессию
+        переносят на другой стол, доплачивают одной строкой. Каждую строку можно проверить по записи.</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>Бесплатный месяц</h2>
+  <table>
+    <tr><th>Когда</th><th>Что происходит</th><th>Что получаете</th></tr>
+    <tr><td>До открытия</td><td>Памятка монтажнику: где вешать камеры, какие брать</td><td>камеры, которые видят столы</td></tr>
+    <tr><td>День 0</td><td>Установка 2–3 часа: компьютер, разметка столов, пробная игра</td><td>панель столов</td></tr>
+    <tr><td>Неделя 1</td><td>Тихий сбор + ручная проверка точности на ваших столах</td><td>цифра «насколько можно доверять»</td></tr>
+    <tr><td>Недели 2–4</td><td>Сверка каждой смены с учётом в Telegram</td><td>отчёт за месяц: часы мимо счётчика в тенге</td></tr>
+  </table>
+  <p>Не подошло — забираем компьютер, вы ничего не должны.</p>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Что нужно от клуба</h2>
+      <ul>
+        <li>Камеры, на которых видно сукно каждого стола целиком (если ещё не повесили — по нашей памятке).</li>
+        <li>Доступ к регистратору («только просмотр»), розетка и сетевой порт для компьютера.</li>
+        <li>Выгрузка сессий из программы учёта (Excel/CSV: стол, начало, конец, сумма).</li>
+        <li>Тарифы столов и часы работы.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h2>Чего мы не обещаем</h2>
+      <p style="margin:4px 0">Система видит только то, что видно камере: стол за абажуром или колонной не считается — скажем
+      это до начала. Первую неделю сверяем систему с ручной проверкой и только потом называем точность.
+      Пока проверка сделана на синтетике и коротких чужих записях — ваш клуб будет первой настоящей
+      проверкой, поэтому месяц бесплатный.</p>
+    </div>
+  </div>
+
+  <footer><span>Qonaq Vision · Telegram: ______ · Тел.: ______</span><span>пример цифр — иллюстрация, не данные клуба</span></footer>
+</div>
+</body>
+</html>

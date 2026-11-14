@@ -35,7 +35,7 @@ tr:last-child td{border-bottom:0}
 td.t{text-align:right}
 .s{font-weight:600}
 .FREE{color:var(--free)}.SEATED_WAITING{color:var(--wait)}.SERVED{color:var(--served)}.NEEDS_CLEANING{color:var(--dirty)}
-.other{color:var(--other)}
+.other{color:var(--other)}.IDLE{color:var(--free)}.IN_PLAY{color:var(--served)}.PAUSED{color:var(--wait)}
 tr.alert td{background:color-mix(in srgb,var(--bad) 12%,transparent)}
 tr.alert .s{color:var(--bad)}
 .feed{list-style:none;margin:0;padding:0;max-height:60vh;overflow:auto}
@@ -59,7 +59,7 @@ tr.alert .s{color:var(--bad)}
   </div>
 </main>
 <script>
-const STATE = {FREE:"Свободен", SEATED_WAITING:"Ждут официанта", SERVED:"Обслуживаются", NEEDS_CLEANING:"Не убран",
+const STATE = {IDLE:"Свободен", IN_PLAY:"Игра", PAUSED:"Пауза", FREE:"Свободен", SEATED_WAITING:"Ждут официанта", SERVED:"Обслуживаются", NEEDS_CLEANING:"Не убран",
   QUEUE:"Есть люди", EMPTY:"Пусто", WAITING:"Ожидают", ATTENDED:"Сотрудник на месте", UNATTENDED:"Нет сотрудника"};
 const EVENT = {seated:"гости сели", served:"подошёл официант", staff_visit:"визит персонала", left:"гости ушли",
   cleaned:"стол убран", walkout_before_service:"ушли, не дождавшись", seated_at_dirty_table:"сели за неубранный стол",
@@ -72,6 +72,7 @@ const clock = (ts, base) => base === "epoch" ? new Date(ts*1000).toLocaleTimeStr
 const built = new Set();
 
 function timer(z){
+  if (z.type === "billiard_table") return z.state === "IDLE" ? "" : mmss(z.session_s);
   if (z.type !== "table") return z.count != null ? z.count + " чел." : "";
   if (z.state === "SEATED_WAITING") return mmss(z.wait_s);
   if (z.state === "SERVED") return mmss(z.session_s);
@@ -84,11 +85,16 @@ function detail(z){
       return "гостей: " + (z.guests || 1) + (z.visits ? " · подходов: " + z.visits : "") + (z.preexisting ? " · сидели до старта" : "");
     return "";
   }
+  if (z.type === "billiard_table")
+    return z.lamp_on == null ? "" : (z.lamp_on ? "лампа горит" : "лампа выключена") + (z.covered ? " · стол накрыт" : "");
   if (z.type === "waiting_area") return z.longest_s ? "самый долгий: " + mmss(z.longest_s) : "";
   if (z.type === "service_point") return z.staffed == null ? "" : (z.staffed ? "сотрудник на месте" : "сотрудника нет");
   return "";
 }
 function chips(s){
+  if (s.profile === "billiard")
+    return [["В игре", s.in_play ?? 0], ["Пауза", s.paused ?? 0], ["Свободно", s.idle ?? 0], ["Лампы горят", s.lamp_on ?? 0],
+            ["Бар занято", s.bar_occupied ?? 0]];
   if (s.profile === "clinic")
     return [["Ожидают", s.waiting ?? 0], ["У стойки", s.at_desk ?? 0], ["Людей в кадре", s.people ?? 0]];
   return [["Загрузка", (s.load_pct ?? 0) + "%"], ["Занято", s.occupied ?? 0], ["Ждут", s.waiting ?? 0],
@@ -107,7 +113,7 @@ function renderCam(c, base){
   d.querySelector(".ts").textContent = clock(c.ts, base);
   d.querySelector(".chips").innerHTML = chips(c.summary).map(([k, v]) => `<div class="chip"><b>${esc(v)}</b><small>${esc(k)}</small></div>`).join("");
   d.querySelector("tbody").innerHTML = c.zones.map(z => {
-    const cls = z.type === "table" ? z.state : "other";
+    const cls = (z.type === "table" || z.type === "billiard_table") ? z.state : "other";
     return `<tr class="${z.alert ? "alert" : ""}"><td><b>${esc(z.zone_id)}</b> ${esc(z.name || "")}</td>
       <td class="s ${cls}">${esc(STATE[z.state] || z.state || "")}</td><td>${esc(detail(z))}</td><td class="t">${esc(timer(z))}</td></tr>`;
   }).join("") || `<tr><td colspan="4" class="empty">Зоны не размечены: python -m qonaq zones edit …</td></tr>`;
