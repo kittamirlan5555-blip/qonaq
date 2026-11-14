@@ -1,5 +1,7 @@
 # Чек-лист установки на объекте
 
+_Полный сценарий пилота (до установки, день установки по шагам, недели 1–4, что делать при сбоях) — `docs/PILOT_RUNBOOK.md`; поиск камер — `python -m qonaq setup`._
+
 Цель выезда: за 1–2 часа получить работающую панель и первый журнал событий. Всё ниже — по порядку.
 
 ## До выезда
@@ -50,33 +52,17 @@
 
 ## Автозапуск
 
-**Windows** — Планировщик заданий: «Создать задачу» → триггер «При запуске компьютера» →
-действие: программа `C:\qonaq\.venv\Scripts\python.exe`, аргументы
-`-m qonaq live --site configs\sites\<объект>.yaml`, рабочая папка `C:\qonaq`.
-Отметить «Выполнять независимо от входа пользователя» и «Перезапускать при сбое».
-Альтернатива — NSSM (служба Windows с автоперезапуском).
-
-**Linux** — systemd, файл `/etc/systemd/system/qonaq.service`:
-
-```ini
-[Unit]
-Description=Qonaq Vision
-After=network-online.target
-
-[Service]
-WorkingDirectory=/opt/qonaq
-ExecStart=/opt/qonaq/.venv/bin/python -m qonaq live --site configs/sites/<объект>.yaml
-Restart=always
-RestartSec=10
-User=qonaq
-
-[Install]
-WantedBy=multi-user.target
-```
+Одной командой (S3; подробности и удалённый доступ — `docs/PILOT_RUNBOOK.md`):
 
 ```bash
-sudo systemctl enable --now qonaq
+python -m qonaq service install --site configs/sites/<объект>.yaml      # Windows: PowerShell от администратора
+python -m qonaq service status  --site configs/sites/<объект>.yaml
+python -m qonaq service logs    --site configs/sites/<объект>.yaml
 ```
+
+Linux — systemd unit `qonaq-<объект>` (под root — системный, иначе пользовательский + `loginctl enable-linger`),
+`Restart=always`. Windows — задача Планировщика «при запуске» от SYSTEM, cmd-обёртка перезапускает live через
+10 с после падения, лог `runs/service_<объект>.log` с ротацией. `--dry-run` — показать, что будет создано.
 
 - [ ] Перезагрузить ПК и убедиться, что система поднялась сама и панель открывается.
 - [ ] Выключить и включить регистратор: поток должен восстановиться сам в течение минуты.

@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Qonaq Vision — одна страница</title>
+<style>
+  @page { size: A4; margin: 14mm 14mm 12mm; }
+  :root { --ink: #1d232b; --muted: #5b6573; --line: #dfe3e8; --accent: #0f766e; --soft: #eef6f5; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #fff; color: var(--ink); font: 10.5pt/1.45 "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+  .page { max-width: 182mm; margin: 0 auto; padding: 16px; }
+  header { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 2px solid var(--accent); padding-bottom: 6px; }
+  .brand { font-weight: 700; font-size: 13pt; color: var(--accent); letter-spacing: .02em; }
+  .city { color: var(--muted); font-size: 9pt; }
+  h1 { font-size: 19pt; line-height: 1.2; margin: 12px 0 4px; }
+  .lead { font-size: 11pt; color: var(--muted); margin: 0 0 10px; }
+  h2 { font-size: 11.5pt; margin: 14px 0 6px; color: var(--accent); }
+  .states { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0 2px; }
+  .chip { border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; font-size: 9pt; }
+  .c1 { border-color: #9ad6a5; } .c2 { border-color: #f2c26b; } .c3 { border-color: #93c5fd; } .c4 { border-color: #f4a3a3; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .card { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  ul { margin: 4px 0; padding-left: 18px; } li { margin: 2px 0; }
+  .tg { background: var(--soft); border-radius: 8px; padding: 6px 10px; font-family: Consolas, "DejaVu Sans Mono", monospace; font-size: 8.8pt; white-space: pre-wrap; margin: 6px 0 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 9.5pt; }
+  th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  .note { font-size: 8.8pt; color: var(--muted); border-left: 3px solid var(--line); padding-left: 8px; margin-top: 10px; }
+  footer { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 6px; font-size: 9pt; color: var(--muted); display: flex; justify-content: space-between; }
+  @media (max-width: 640px) { .grid { grid-template-columns: 1fr; } h1 { font-size: 16pt; } }
+  @media print { .page { padding: 0; } }
+</style>
+</head>
+<body>
+<div class="page">
+  <header><span class="brand">QONAQ VISION</span><span class="city">для ресторанов и кафе Астаны</span></header>
+
+  <h1>Ваши камеры считают, сколько гости ждут официанта</h1>
+  <p class="lead">Небольшой компьютер подключается к уже установленному регистратору видеонаблюдения
+    и в реальном времени видит каждый стол.</p>
+  <div class="states">
+    <span class="chip c1">свободен</span><span class="chip c2">гости сели и ждут</span>
+    <span class="chip c3">обслуживают</span><span class="chip c4">ушли, стол не убран</span>
+  </div>
+
+  <div class="grid">
+    <div>
+      <h2>Что вы видите</h2>
+      <ul>
+        <li><b>Итоги дня в Telegram</b>: посадки, за сколько обычно подходил официант, сколько столов ждали
+          дольше 3 минут, кто ушёл, не дождавшись, простой неубранных столов в часы пик — и оценка упущенной
+          выручки в тенге.</li>
+        <li><b>Подсказки администратору</b> в момент проблемы — до того, как гость напишет отзыв в 2ГИС:</li>
+      </ul>
+      <div class="tg">⚠ 19:42 · Стол 5: гости ждут официанта уже 3 мин (сели в 19:39)</div>
+      <ul><li><b>Отчёт «как было / как стало»</b>: худшие часы и столы, где залу не хватает рук.</li></ul>
+    </div>
+    <div>
+      <h2>Приватность</h2>
+      <div class="card">
+        <ul>
+          <li>Видео <b>не уходит</b> из заведения — всё считается на месте, наружу только цифры.</li>
+          <li><b>Лиц не распознаём</b> и не узнаём людей.</li>
+          <li>Видео не записываем: его и так пишет ваш регистратор. Кадры в отчётах — с размытыми лицами.</li>
+          <li>Не нужны доступ к кассе, датчики на столах, кнопки вызова.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <h2>Бесплатный пилот — 4 недели</h2>
+  <table>
+    <tr><th style="width:18%">Когда</th><th>Что происходит</th><th style="width:34%">Что получаете</th></tr>
+    <tr><td>День 0</td><td>Установка 2–4 часа, зал работает как обычно</td><td>—</td></tr>
+    <tr><td>Неделя 1</td><td>Тихий сбор: персонал ничего не замечает</td><td>итоги дня в Telegram</td></tr>
+    <tr><td>Неделя 2</td><td>Встреча 30 минут</td><td>отчёт «как есть»: 3 главные цифры зала</td></tr>
+    <tr><td>Недели 3–4</td><td>Включаем подсказки администратору</td><td>отчёт «как стало», решаете, нужно ли дальше</td></tr>
+  </table>
+  <p>Не подошло — забираем компьютер, вы ничего не платите и ничего не должны.</p>
+
+  <div class="grid">
+    <div>
+      <h2>Что нужно от вас</h2>
+      <ul>
+        <li>Доступ к регистратору (лучше отдельный пользователь «только просмотр»).</li>
+        <li>Розетка и место для компьютера размером с книгу, свободное гнездо в роутере.</li>
+        <li>Средний чек на стол и часы работы — для расчёта в тенге.</li>
+        <li>30 минут на встречу после второй недели.</li>
+      </ul>
+    </div>
+    <div>
+      <h2>Чего мы не обещаем</h2>
+      <p>Точность зависит от того, как висят ваши камеры: часть столов может быть не видна — покажем какие.
+        В первую неделю сверяем цифры системы с ручной проверкой на вашем зале и только потом говорим,
+        насколько им можно доверять. Мы не заменяем управляющего — мы даём ему измерения.</p>
+    </div>
+  </div>
+
+  <footer><span>Qonaq Vision · Астана</span><span>Telegram: __________ · Тел.: __________</span></footer>
+</div>
+</body>
+</html>
