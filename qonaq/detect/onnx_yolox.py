@@ -54,6 +54,32 @@ def ensure_weights(name: str) -> Path:
     return dst
 
 
+_DEVICE_BY_PROVIDER = {"CUDAExecutionProvider": "cuda:0", "DmlExecutionProvider": "directml"}
+
+
+def select_providers(ort, device: str = "auto") -> list[str]:
+    """Провайдеры onnxruntime по `device`. Для CUDA сначала подгружаются DLL CUDA/cuDNN из pip-пакетов
+    nvidia-* (`onnxruntime-gpu[cuda,cudnn]`, `ort.preload_dlls`, onnxruntime ≥ 1.21): на Windows без
+    установленного CUDA Toolkit иначе CUDA-провайдер «доступен», но не создаётся."""
+    available = ort.get_available_providers()
+    if device in ("auto", "cuda", "cuda:0") and "CUDAExecutionProvider" in available:
+        preload = getattr(ort, "preload_dlls", None)
+        if preload is not None:
+            try:
+                preload()
+            except Exception as e:  # noqa: BLE001
+                log.debug("preload_dlls: %s", e)
+        return ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    if device == "auto" and "DmlExecutionProvider" in available:  # Windows, любой GPU
+        return ["DmlExecutionProvider", "CPUExecutionProvider"]
+    return ["CPUExecutionProvider"]
+
+
+def device_from_providers(active: Sequence[str]) -> str:
+    """Устройство по провайдерам, которые сессия реально использует (`InferenceSession.get_providers()`)."""
+    return _DEVICE_BY_PROVIDER.get(active[0], "cpu") if active else "cpu"
+
+
 def nms(boxes: np.ndarray, scores: np.ndarray, iou_thr: float) -> list[int]:
     """Классический NMS. boxes: (N,4) xyxy."""
     if len(boxes) == 0:
@@ -86,19 +112,16 @@ class OnnxYoloxDetector:
         self.conf = conf
         self.iou = iou
         self.tiles = tiles
-        available = ort.get_available_providers()
-        providers = ["CPUExecutionProvider"]
-        self.device = "cpu"
-        if device in ("auto", "cuda", "cuda:0") and "CUDAExecutionProvider" in available:
-            providers.insert(0, "CUDAExecutionProvider")
-            self.device = "cuda:0"
-        elif device == "auto" and "DmlExecutionProvider" in available:  # Windows, любой GPU
-            providers.insert(0, "DmlExecutionProvider")
-            self.device = "directml"
+        providers = select_providers(ort, device)
         opts = ort.SessionOptions()
         if threads:
             opts.intra_op_num_threads = threads
         self._sess = ort.InferenceSession(str(path), sess_options=opts, providers=providers)
+        # «Доступен» в onnxruntime-gpu не значит «работает»: без DLL CUDA/cuDNN сессия молча уходит на CPU.
+        self.device = device_from_providers(self._sess.get_providers())
+        if providers[0] == "CUDAExecutionProvider" and self.device != "cuda:0":
+            log.warning("CUDA в onnxruntime не запустилась (нет DLL CUDA/cuDNN) — детектор на CPU. "
+                        "Поставьте: pip install \"onnxruntime-gpu[cuda,cudnn]\"")
         inp = self._sess.get_inputs()[0]
         self._input = inp.name
         self.size = int(inp.shape[2])  # квадратный вход 416 или 640

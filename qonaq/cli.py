@@ -715,7 +715,11 @@ def cmd_demo_reel(args) -> int:
     name = f"synth_{sc.name}"
     video = PROJECT_ROOT / "data" / "videos" / f"{name}.mp4"
     if args.rerun or not video.exists():
-        build(sp, PROJECT_ROOT)  # нужны датасеты и индекс: fetch_datasets.py + qonaq data index
+        if not (PROJECT_ROOT / "data" / "index" / "roles.csv").exists():  # синтетике нужны фигуры из датасетов
+            print("Для demo-reel нужны датасеты и индекс (~1 ГБ, один раз):\n"
+                  "  python scripts/fetch_datasets.py\n  python -m qonaq data index")
+            return 2
+        build(sp, PROJECT_ROOT)
     site = _site(args)
     site.process_fps = sc.fps
     site.thresholds.preexisting_grace_s = 0

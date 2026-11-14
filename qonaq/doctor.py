@@ -105,7 +105,8 @@ def run(check_model: bool = True) -> int:
     print(f"  Python      {info['python']}   {info['platform']}")
     for name, ver in info["packages"].items():
         print(f"  {ok(ver)}{name:<12} {ver or 'не установлен'}")
-    print(f"  CUDA        {'да: ' + str(info['gpu']) if info['cuda'] else 'нет (работаем на CPU)'}")
+    # CUDA через PyTorch; детектор onnxruntime может быть на GPU и без него — см. строку «детектор» ниже
+    print(f"  CUDA torch  {'да: ' + str(info['gpu']) if info['cuda'] else 'нет (для onnxruntime не нужен)'}")
     if info.get("onnx_providers"):
         print(f"  ONNX        {', '.join(info['onnx_providers'])}")
     print(f"  ffmpeg      {info['ffmpeg'] or 'не найден (видео будет в mp4v, не H.264)'}")

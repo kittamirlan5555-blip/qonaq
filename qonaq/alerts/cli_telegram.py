@@ -20,6 +20,11 @@ def add_parser(sub) -> None:
     p = t.add_parser("test", help="тестовое сообщение во все настроенные чаты (.env)")
     p.add_argument("--fake", action="store_true", help="поднять локальный фейковый API и проверить весь поток на нём")
     p.add_argument("--site", help="YAML объекта (название, часовой пояс)")
+    p.add_argument("--wait-press", type=float, default=0.0, metavar="СЕК",
+                   help="ждать нажатия «Неверно» под примером алерта столько секунд и показать запись в feedback")
+    p.add_argument("--db", default="runs/telegram_test/events.sqlite",
+                   help="журнал, куда пишутся пример алерта и нажатия «Неверно»")
+    p.add_argument("--only-ping", action="store_true", help="только «проверка связи», без примеров алерта и сводки")
     p = t.add_parser("chat-id", help="узнать chat id: напишите боту (или добавьте его в группу) и запустите")
     p = t.add_parser("fake-server", help="локальный фейковый Telegram Bot API для проверки")
     p.add_argument("--host", default="127.0.0.1")
@@ -170,6 +175,63 @@ def run_flow(sender_factory, fake_state=None, site=None) -> list[str]:
     return checks
 
 
+EXAMPLE_ALERT_PREFIX = "🧪 Пример алерта (проверка, не настоящий). Нажмите «Неверно» — нажатие запишется:"
+EXAMPLE_SHIFT_PREFIX = "🧪 Пример итогов дня (цифры выдуманные):"
+
+
+def send_examples(sender_factory, chats: dict[str, str], site, store, wait_press_s: float = 0.0,
+                  poll_timeout_s: int = 10, log=print) -> dict[str, Any]:
+    """Для настоящего бота: пример алерта с кнопкой «Неверно» администратору и пример итогов дня владельцу
+    заведения (если его чата нет — администратору); по желанию ждёт нажатия и проверяет запись в `feedback`."""
+    from qonaq.alerts.telegram import FeedbackPoller, alert_id, format_alert
+
+    ex = example_messages(site)
+    res: dict[str, Any] = {"alert_id": None, "alert_sent": False, "shift_sent": False, "feedback": []}
+    admin_chat = chats.get("TELEGRAM_CHAT_ID")
+    if admin_chat:
+        admin = sender_factory(admin_chat)
+        poller = FeedbackPoller(admin, store, timeout_s=poll_timeout_s)
+        try:
+            poller.skip_pending()  # старые нажатия и сообщения боту не считаем
+        except Exception as e:  # noqa: BLE001
+            log(f"  getUpdates: {e}")
+        now = time.time()
+        ev = Event(now, "T05", "alert", {"kind": "no_waiter", "sid": int(now), "waited_s": 192.0}, "test")
+        aid = alert_id(ev)
+        text = EXAMPLE_ALERT_PREFIX + "\n" + format_alert(ev, "", None, now, site.business.timezone)
+        try:
+            admin.send(text, feedback_id=aid)
+            store.add_alert(aid, ev.camera_id, ev.zone_id, "no_waiter", ev.ts, text, True, True, now)
+            res.update(alert_id=aid, alert_sent=True)
+            log("  пример алерта с кнопкой «Неверно» → администратору: отправлено")
+        except Exception as e:  # noqa: BLE001
+            log(f"  пример алерта: ОШИБКА {e}")
+    shift_chat = chats.get("TELEGRAM_VENUE_CHAT_ID") or admin_chat
+    if shift_chat:
+        try:
+            sender_factory(shift_chat).send(EXAMPLE_SHIFT_PREFIX + "\n" + ex["shift"])
+            res["shift_sent"] = True
+            log("  пример итогов дня → " + ("владельцу заведения" if chats.get("TELEGRAM_VENUE_CHAT_ID")
+                                           else "администратору") + ": отправлено")
+        except Exception as e:  # noqa: BLE001
+            log(f"  пример итогов дня: ОШИБКА {e}")
+    if res["alert_sent"] and wait_press_s > 0:
+        log(f"  жду нажатия «Неверно» до {wait_press_s:.0f} с…")
+        deadline = time.time() + wait_press_s
+        while time.time() < deadline:
+            poller.timeout_s = max(0, min(poll_timeout_s, int(deadline - time.time())))
+            try:
+                poller.poll_once()
+            except Exception as e:  # noqa: BLE001
+                log(f"  getUpdates: {e}")
+                time.sleep(2)
+            fb = [f for f in store.feedback() if f["alert_id"] == res["alert_id"]]
+            if fb:
+                res["feedback"] = fb
+                break
+    return res
+
+
 def _wait(cond, timeout: float = 5.0) -> bool:
     t0 = time.time()
     while time.time() - t0 < timeout:
@@ -223,6 +285,26 @@ def cmd_test(args) -> int:
         except Exception as e:  # noqa: BLE001
             print(f"  {env}={chat} — {who}: ОШИБКА {e}")
             failed = True
+    if any_ok and not args.only_ping:
+        from qonaq.events.store import EventStore
+
+        store = EventStore(args.db)
+        try:
+            chats = {env: os.environ[env] for env, _ in CHATS if os.environ.get(env)}
+            r = send_examples(lambda chat: TelegramSender(token, chat), chats, site, store, args.wait_press)
+            failed = failed or (chats.get("TELEGRAM_CHAT_ID") and not r["alert_sent"]) or not r["shift_sent"]
+            if args.wait_press > 0 and r["alert_sent"]:
+                if r["feedback"]:
+                    f = r["feedback"][0]
+                    print(f"  нажатие «Неверно» записано в feedback ({args.db}): alert_id={f['alert_id']}, "
+                          f"стол {f['zone_id']}, от {f['user'] or '—'}")
+                else:
+                    print(f"  нажатия «Неверно» за {args.wait_press:.0f} с не было")
+                    failed = True
+            elif r["alert_sent"]:
+                print(f"  чтобы проверить кнопку: python -m qonaq telegram test --wait-press 120 (журнал {args.db})")
+        finally:
+            store.close()
     return 1 if failed or not any_ok else 0
 
 

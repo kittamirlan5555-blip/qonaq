@@ -98,7 +98,7 @@ python -m qonaq zones edit data/videos/staged.mp4 --zones configs/zones/staged.y
 
 и запустить `staged-check` ещё раз (файл зон теперь есть — он и используется).
 
-Быстрее на слабом CPU: `--model yolox_s`. На Windows с RTX 2060 Super: `pip install onnxruntime-gpu` вместо
+Быстрее на слабом CPU: `--model yolox_s`. На Windows с RTX 2060 Super: `pip install "onnxruntime-gpu[cuda,cudnn]"` вместо
 `onnxruntime` — YOLOX пойдёт на CUDA.
 
 ## 7. Что прислать обратно

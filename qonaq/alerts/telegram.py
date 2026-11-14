@@ -79,7 +79,10 @@ class TelegramSender:
             raise RuntimeError(f"Telegram API {r.status_code}: {r.text[:200]}")
 
     def call(self, method: str, **body) -> dict:
-        r = self._client.post(self._base + method, json=body)
+        kw: dict[str, Any] = {}
+        if body.get("timeout"):  # long polling getUpdates: ответ придёт не раньше timeout — ждём дольше
+            kw["timeout"] = float(body["timeout"]) + 10.0
+        r = self._client.post(self._base + method, json=body, **kw)
         if r.status_code != 200:
             raise RuntimeError(f"Telegram API {r.status_code}: {r.text[:200]}")
         return r.json()
@@ -101,6 +104,14 @@ class FeedbackPoller:
         self._offset = 0
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+
+    def skip_pending(self) -> int:
+        """Пропустить уже накопившиеся обновления (старые нажатия, сообщения «привет» боту): дальше — только новые."""
+        res = self.sender.call("getUpdates", offset=-1, timeout=0)
+        ids = [int(u["update_id"]) for u in res.get("result", [])]
+        if ids:
+            self._offset = max(ids) + 1
+        return len(ids)
 
     def poll_once(self) -> int:
         res = self.sender.call("getUpdates", offset=self._offset, timeout=self.timeout_s,

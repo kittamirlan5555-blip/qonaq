@@ -533,7 +533,7 @@ Wi-Fi/коммутатор между ПК и регистратором, сут
 | «CPU мини-ПК, 2–4 камеры» — `configs/sites/profile_cpu_minipc.yaml` | `yolox_m` int8, 2 плитки в ROI, 2 кадр/с, детектор через кадр | 0,59 с детектора на камеру в секунду (оба ядра) → здесь в реальном времени тянутся ~1–2 камеры | на 4-ядерном мини-ПК — 2–4 камеры (оценка ×2 к этой машине **не измерена**); ~0,7 людей за столами на тёмной угловой камере |
 | «GPU (RTX 2060), 8 камер» — `configs/sites/profile_gpu.yaml` | `yolox_m` fp32, 2 плитки в ROI, 2 кадр/с, каждый кадр | нужно 8 камер × 2 кадр/с × 3 прогона = 48 прогонов `yolox_m` 640 в секунду | на GPU **не измерено** (в облаке нет GPU); замерить `bench_detector.py --variants yolox_m:2:roi` на месте |
 
-Как включить GPU: Windows/Linux с NVIDIA — `pip uninstall -y onnxruntime && pip install onnxruntime-gpu`
+Как включить GPU: Windows/Linux с NVIDIA — `pip uninstall -y onnxruntime && pip install "onnxruntime-gpu[cuda,cudnn]"`
 (CUDA 12 + cuDNN 9 под версию onnxruntime-gpu, см. таблицу совместимости onnxruntime.ai); детектор сам выберет
 `CUDAExecutionProvider` (`device: auto`). Windows с любой видеокартой без CUDA (в т.ч. AMD/Intel) —
 `pip uninstall -y onnxruntime && pip install onnxruntime-directml`: выберется `DmlExecutionProvider`. Проверка —

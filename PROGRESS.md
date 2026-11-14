@@ -36,7 +36,7 @@ _Автономные сессии по `SPRINT2.md` (главнее `WEEKEND_PL
 4. **Первые разговоры:** 3–5 заведений в Астане по `docs/sales/CONVERSATION.md` (сначала боли, потом пилот);
    одностраничник — `docs/sales/ONE_PAGER.html` (печать в PDF из браузера); соглашение
    `docs/sales/PILOT_AGREEMENT_TEMPLATE.md` — **показать юристу до первого использования**.
-5. **Демо-ролик** (`python -m qonaq demo-reel` → `runs/demo_reel.mp4`) — показывать лично с телефона, не публиковать
+5. **Демо-ролик** (один раз `python scripts/fetch_datasets.py` и `python -m qonaq data index` — синтетике нужны фигуры из датасетов; затем `python -m qonaq demo-reel` → `runs/demo_reel.mp4`) — показывать лично с телефона, не публиковать
    (стоковый фон и чужая запись, D-034). Для соцсетей — пересобрать на своей записи.
 
 ## Топ-5 следующих шагов
@@ -151,7 +151,7 @@ python scripts/fetch_datasets.py && python scripts/fetch_models.py && python -m 
 python -m qonaq train roles && python -m qonaq calibrate curve && python -m qonaq synth
 ```
 
-На Windows с RTX 2060 Super: `pip install onnxruntime-gpu` (вместо `onnxruntime`) — YOLOX и энкодер пойдут на CUDA.
+На Windows с RTX 2060 Super: `pip uninstall -y onnxruntime && pip install "onnxruntime-gpu[cuda,cudnn]"` — YOLOX пойдёт на CUDA. Без `[cuda,cudnn]` на Windows без CUDA Toolkit детектор молча работал на CPU (onnxruntime-gpu 1.32 ждёт CUDA 13 + cuDNN 9); теперь DLL подгружаются из pip-пакетов, а `doctor` показывает реальное устройство.
 
 ## Топ-5 следующих шагов
 
