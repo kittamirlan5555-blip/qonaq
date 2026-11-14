@@ -209,6 +209,8 @@ class Scene:
             self.shots[tid].sort()
         self.H = self._homography()
         self.size = (960, 540)
+        self.out_size = tuple(spec.get("out_size", self.size))  # камера дальше / субпоток хуже — меньше кадр
+        self.crf = int(spec.get("crf", 26))
         self.ball_moving: dict[str, list[tuple[float, float]]] = {tid: [] for tid in self.tables}
 
     # ------------------------------------------------------------------ geometry
@@ -223,7 +225,9 @@ class Scene:
 
     def to_img(self, pts_m: list[tuple[float, float]]) -> list[list[float]]:
         p = np.float32([[x * PX_M, y * PX_M] for x, y in pts_m]).reshape(-1, 1, 2)
-        return [[round(float(a), 1), round(float(b), 1)] for a, b in cv2.perspectiveTransform(p, self.H).reshape(-1, 2)]
+        k = self.out_size[0] / self.size[0]
+        return [[round(float(a) * k, 1), round(float(b) * k, 1)]
+                for a, b in cv2.perspectiveTransform(p, self.H).reshape(-1, 2)]
 
     # ------------------------------------------------------------------ people
     def _players(self, tid: str, t: float) -> list[tuple[float, float, bool, tuple[float, float] | None]]:
@@ -327,6 +331,8 @@ class Scene:
             img *= 1.0 + self.flicker * math.sin(2 * math.pi * 0.37 * t)
         img = np.clip(img, 0, 255).astype(np.uint8)
         out = cv2.warpPerspective(img, self.H, self.size, flags=cv2.INTER_LINEAR)
+        if self.out_size != self.size:
+            out = cv2.resize(out, self.out_size, interpolation=cv2.INTER_AREA)
         if self.noise > 0:
             out = np.clip(out + self.rng.normal(0, self.noise, out.shape), 0, 255).astype(np.uint8)
         return out
@@ -408,7 +414,7 @@ class Scene:
         return out
 
     def zones(self) -> dict[str, Any]:
-        return {"camera_id": f"synth_{self.spec['name']}", "frame_size": list(self.size),
+        return {"camera_id": f"synth_{self.spec['name']}", "frame_size": list(self.out_size),
                 "zones": [{"id": tid, "type": "billiard_table", "polygon": self.to_img(tb.felt_polygon_m())}
                           for tid, tb in self.tables.items()]}
 
@@ -422,7 +428,7 @@ def build(scenario: Path, out_dir: Path, zones_dir: Path | None = None) -> dict[
     name = f"synth_{spec['name']}"
     out_dir.mkdir(parents=True, exist_ok=True)
     video = out_dir / f"{name}.mp4"
-    sink = VideoSink(video, sc.fps, crf=26)
+    sink = VideoSink(video, sc.fps, crf=sc.crf)
     n = 0
     try:
         for _, frame in sc.frames():

@@ -14,6 +14,24 @@ _Статус задач — таблица в `SPRINT3.md`; цифры — `doc
   0 ложных тревог. Тесты: `tests/test_health.py` (+6, в т.ч. сквозь кодек). Синтетика — с шумом матрицы.
 - Не проверено: реальная ночная запись пустого зала, регистратор с CBR.
 
+### B2. Профиль `billiard` — ✅ (на процедурной синтетике)
+- Зона `billiard_table` (4 угла сукна), профиль `billiard` (`configs/sites/billiard_example.yaml`): стол «в игре»
+  по эпизодам движения шаров внутри сукна, люди рядом не участвуют (D-037). Видео-слой — `qonaq/billiard/felt.py`
+  (подавление смены света, мерцания, теней, рук/людей/кия через борт), чистая логика — `qonaq/logic/billiard.py`
+  (IDLE → IN_PLAY ⇄ PAUSED; K=3 эпизода за T=5 мин; паузы < P=10 мин не рвут сессию; лампа погасла / стол
+  накрыт — конец). События `game_started/game_ended/lamp_on/lamp_off/table_covered` — в ту же SQLite.
+  Барная стойка — обычные зоны `table`.
+- Тесты: `tests/test_billiard.py` (11 таймлайнов из B2 + 4 на видео-слой). Синтетика: `python -m qonaq billiard synth
+  configs/synth_billiard/evening.yaml --run` — IoU 0,999 (EVAL §19; синтетика своя — это не оценка качества).
+
+### B3. Сверка с учётом — ✅
+- `python -m qonaq reconcile --events … --sessions paid.csv [--map tables.yaml] [--site …]` → `reconcile.html`,
+  `reconcile.json`, `reconcile_telegram.txt` (`--send` — в чат владельца заведения). Бильярд: «игра без
+  счётчика», «играли дольше оплаченного», «счётчик шёл, стол пустой»; ресторан: «стол занят, чека нет».
+  Формат CSV и допуски — `docs/billiard/RECONCILE.md`; пример — `docs/examples/reconcile_example.html`.
+- live раз в минуту пишет `heartbeat` (какие камеры давали кадры) — сверка ничего не утверждает за время, когда
+  система не видела (перезапуск, свет). Тесты: `tests/test_reconcile.py` (12).
+
 ## Первый запуск на машине владельца (14.11.2026, Windows 11, Python 3.11.9, RTX 2060 SUPER, драйвер 610)
 
 - **Работает:** установка по README, `doctor`, 204 теста (все зелёные на Windows), `fetch_videos`,

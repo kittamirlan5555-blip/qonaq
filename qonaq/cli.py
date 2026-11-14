@@ -235,6 +235,9 @@ def build_parser() -> argparse.ArgumentParser:
     add_setup(sub)
     add_service(sub)
     add_billiard(sub)
+    from qonaq.reconcile import add_parser as add_reconcile
+
+    add_reconcile(sub)
     return ap
 
 
@@ -765,7 +768,14 @@ def cmd_billiard(args) -> int:
     return run(args)
 
 
+def cmd_reconcile(args) -> int:
+    from qonaq.reconcile import cmd_reconcile as run
+
+    return run(args)
+
+
 HANDLERS = {
+    "reconcile": cmd_reconcile,
     "billiard": cmd_billiard,
     "demo-reel": cmd_demo_reel,
     "synth-week": cmd_synth_week,

@@ -225,6 +225,11 @@ class LiveService:
                 "alerts_pending": self.alerts.pending(),
             "perf": self.perf, "events_pending": self.writer.pending()}
         self.perf = line
+        if self.time_base == "epoch":  # B3/B8: «система видела» — для сверки с учётом (перезапуски, обрывы)
+            from qonaq.logic.base import Event
+
+            up = [cid for cid, row in cams.items() if row.get("fps", 0) > 0 and row.get("connected", True)]
+            self.writer.add([Event(now, "", "heartbeat", {"window_s": round(window, 1), "up": up})])
         with (self.run_dir / "live_stats.jsonl").open("a", encoding="utf-8") as f:
             f.write(json.dumps(line, ensure_ascii=False) + "\n")
         return line
@@ -317,4 +322,5 @@ class LiveService:
         }
 
     def events(self, since_id: int = 0, limit: int = 100) -> list[dict[str, Any]]:
-        return self.store.events(since_id=since_id, limit=limit, newest_first=since_id == 0)
+        evs = self.store.events(since_id=since_id, limit=limit, newest_first=since_id == 0)
+        return [e for e in evs if e["type"] != "heartbeat"]  # служебные отметки «система видела» — не для ленты

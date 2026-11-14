@@ -53,5 +53,6 @@ addopts = "-q"
 [tool.ruff.lint.per-file-ignores]
 "scripts/fetch_videos.py" = ["E501"]
 "qonaq/metrics/report.py" = ["E501"]
+"qonaq/reconcile.py" = ["E501"]  # HTML-шаблон отчёта сверки
 "qonaq/train/*" = ["E501"]  # Markdown-таблицы  # HTML/Markdown-шаблоны
 "tests/*" = ["E501"]

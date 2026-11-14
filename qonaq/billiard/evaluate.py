@@ -79,11 +79,23 @@ def evaluate(pred: dict[str, list[Interval]], gt: dict[str, list[Interval]]) -> 
             "missed": sum(r["missed"] for r in rows), "false": sum(r["false"] for r in rows)}
 
 
-def load_gt(path: str | Path) -> dict[str, list[Interval]]:
+def load_gt(path: str | Path, session_gap_s: float | None = None) -> dict[str, list[Interval]]:
+    """Разметка: интервалы игры по столам. Игры одного стола с перерывом короче session_gap_s (по умолчанию
+    из разметки или 600 с = P) — одна сессия: так её считает и учёт (компания взяла стол и сделала перерыв)."""
     import yaml
 
     d = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-    return {tid: [tuple(x) for x in v.get("games", [])] for tid, v in (d.get("tables") or {}).items()}
+    gap = float(session_gap_s if session_gap_s is not None else d.get("session_gap_s", 600.0))
+    out: dict[str, list[Interval]] = {}
+    for tid, v in (d.get("tables") or {}).items():
+        merged: list[list[float]] = []
+        for a, b in sorted(tuple(x) for x in v.get("games", [])):
+            if merged and a - merged[-1][1] < gap:
+                merged[-1][1] = max(merged[-1][1], b)
+            else:
+                merged.append([a, b])
+        out[tid] = [(a, b) for a, b in merged]
+    return out
 
 
 def format_table(res: dict[str, Any]) -> str:
