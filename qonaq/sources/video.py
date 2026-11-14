@@ -16,7 +16,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from qonaq.config import expand_env, mask_secrets
+from qonaq.config import expand_env, mask_secrets, unresolved_env
 
 log = logging.getLogger("qonaq.source")
 
@@ -38,6 +38,10 @@ class SourceInfo:
 
 def parse_source(spec: str) -> tuple[str, str | int]:
     """'webcam:0' -> ('webcam', 0); 'rtsp://..' -> ('stream', url); путь -> ('file', path)."""
+    missing = unresolved_env(str(spec))
+    if missing:
+        log.error("в адресе камеры не подставлены %s: нет в .env (запускайте из папки проекта или проверьте .env)",
+                  ", ".join("${" + m + "}" for m in missing))
     spec = expand_env(str(spec)).strip()
     low = spec.lower()
     if low.startswith("webcam"):

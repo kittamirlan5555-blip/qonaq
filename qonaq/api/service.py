@@ -130,6 +130,14 @@ class LiveService:
         except Exception:  # noqa: BLE001 — на Windows без пакета tzdata
             return time.localtime()
 
+    def _tz(self):
+        try:
+            from zoneinfo import ZoneInfo
+
+            return ZoneInfo(self.site.business.timezone)
+        except Exception:  # noqa: BLE001 — на Windows без пакета tzdata
+            return None
+
     def _local_time_label(self) -> str:
         return time.strftime("%H:%M", self._local_now())
 
@@ -176,7 +184,8 @@ class LiveService:
         if due(lt, self.site.health.daily_at, self._daily_day):
             self._daily_day = time.strftime("%Y-%m-%d", lt)
             daily = build_daily(self.run_dir, self.site.name, st, self.sampler.pick(self.site.health.daily_frames),
-                                self.perf)
+                                self.perf, since=now - 86400 if self.time_base == "epoch" else None,
+                                tz=self._tz())
             if self.owner is not None:
                 try:
                     send_daily(self.owner, daily)
@@ -202,7 +211,7 @@ class LiveService:
                   "октября", "ноября", "декабря"]
         return shift_summary_text(m, self.site.business.currency, f"{lt.tm_mday} {months[lt.tm_mon - 1]}")
 
-    def perf_tick(self) -> dict[str, Any]:
+    def perf_tick(self, final: bool = False) -> dict[str, Any]:
         """Строка live-статистики (S1): fps и задержка по камерам за окно, переподключения, CPU, RSS."""
         import json
 
@@ -228,8 +237,13 @@ class LiveService:
         if self.time_base == "epoch":  # B3/B8: «система видела» — для сверки с учётом (перезапуски, обрывы)
             from qonaq.logic.base import Event
 
-            up = [cid for cid, row in cams.items() if row.get("fps", 0) > 0 and row.get("connected", True)]
-            self.writer.add([Event(now, "", "heartbeat", {"window_s": round(window, 1), "up": up})])
+            # при остановке источники уже закрыты (connected=False) — считаем по кадрам за окно; `final` отличает
+            # штатную остановку от аварийной в простоях (qonaq/health/downtime.py)
+            up = [cid for cid, row in cams.items() if row.get("fps", 0) > 0 and (final or row.get("connected", True))]
+            payload = {"window_s": round(window, 1), "up": up}
+            if final:
+                payload["final"] = True
+            self.writer.add([Event(now, "", "heartbeat", payload)])
         with (self.run_dir / "live_stats.jsonl").open("a", encoding="utf-8") as f:
             f.write(json.dumps(line, ensure_ascii=False) + "\n")
         return line
@@ -271,7 +285,7 @@ class LiveService:
         if self._thread is not None:
             self._thread.join(timeout=15)
         try:
-            self.perf_tick()  # последняя строка live-статистики
+            self.perf_tick(final=True)  # последняя строка live-статистики
         except Exception:  # noqa: BLE001
             pass
         try:

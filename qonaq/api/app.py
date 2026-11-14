@@ -66,3 +66,28 @@ def create_app(service: LiveService) -> FastAPI:
         return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
 
     return app
+
+
+def graceful_server(config):
+    """uvicorn.Server, который по SIGTERM/SIGINT только выходит из server.run() (B7).
+
+    uvicorn ≥ 0.29 после остановки заново поднимает пойманный сигнал со штатным обработчиком: SIGTERM от systemd
+    (`service restart/stop`) убивал процесс до `finally: service.stop()` — терялись хвост очереди событий,
+    последний heartbeat, health.json, run.json и отчёт. Здесь пойманные сигналы забываются перед выходом.
+    """
+    import contextlib
+
+    import uvicorn
+
+    class _Server(uvicorn.Server):
+        @contextlib.contextmanager
+        def capture_signals(self):
+            with super().capture_signals():
+                try:
+                    yield
+                finally:
+                    captured = getattr(self, "_captured_signals", None)
+                    if isinstance(captured, list):
+                        captured.clear()
+
+    return _Server(config)

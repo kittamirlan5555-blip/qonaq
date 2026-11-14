@@ -295,14 +295,26 @@ def expand_env(value: str) -> str:
     return _ENV_RE.sub(_sub, value)
 
 
-def load_dotenv_if_any(root: Path | None = None) -> None:
+def load_dotenv_if_any(root: Path | None = None) -> list[Path]:
+    """`.env` из текущей папки, затем из корня проекта (B7: команда, запущенная не из папки проекта, иначе
+    не находила пароль регистратора и стучалась в камеры с `${QONAQ_NVR_USER}` в адресе). Уже заданные
+    переменные окружения не перезаписываются; первый найденный файл главнее. Возвращает загруженные файлы."""
     try:
         from dotenv import load_dotenv
     except ImportError:  # pragma: no cover
-        return
-    env = (root or Path.cwd()) / ".env"
-    if env.exists():
-        load_dotenv(env)
+        return []
+    loaded: list[Path] = []
+    for base in (root or Path.cwd(), PROJECT_ROOT):
+        env = Path(base) / ".env"
+        if env.exists() and env.resolve() not in [p.resolve() for p in loaded]:
+            load_dotenv(env, override=False)
+            loaded.append(env)
+    return loaded
+
+
+def unresolved_env(value: str) -> list[str]:
+    """Имена переменных ${VAR} без умолчания, которых нет в окружении (после expand_env они остались бы как есть)."""
+    return [m.group(1) for m in _ENV_RE.finditer(value) if m.group(1) not in os.environ and m.group(2) is None]
 
 
 def load_site(path: str | Path) -> SiteConfig:

@@ -58,7 +58,8 @@ class FrameSampler:
 
 
 def summary_text(site_name: str, status: dict[str, Any], events: list[dict], alerts: list[dict] | None = None,
-                 feedback: list[dict] | None = None, perf: dict[str, Any] | None = None) -> str:
+                 feedback: list[dict] | None = None, perf: dict[str, Any] | None = None,
+                 downtime: list[str] | None = None) -> str:
     seated = sum(1 for e in events if e["type"] == "seated")
     served = sum(1 for e in events if e["type"] == "served")
     left = sum(1 for e in events if e["type"] in ("left", "walkout_before_service"))
@@ -73,8 +74,10 @@ def summary_text(site_name: str, status: dict[str, Any], events: list[dict], ale
         lines.append(f"Отметок «неверно» под алертами: {len(feedback)}")
     for i in status.get("issues", [])[:10]:
         lines.append(f"• {i['camera_id']}: {i['message']}")
+    for ln in downtime or []:  # по журналу: переживает перезапуск службы (health.json — только текущий процесс)
+        lines.append(f"• {ln}")
     for cid, c in (status.get("cameras") or {}).items():
-        if c.get("outages"):
+        if c.get("outages") and not downtime:
             lines.append(f"• {cid}: обрывов связи {c['outages']}, без картинки всего {c['down_s_total'] / 60:.0f} мин")
     if perf:
         cams = perf.get("cameras") or {}
@@ -86,8 +89,11 @@ def summary_text(site_name: str, status: dict[str, Any], events: list[dict], ale
 
 
 def build_daily(run_dir: Path, site_name: str, status: dict[str, Any], frames: list[tuple[bytes, str]],
-                perf: dict[str, Any] | None = None) -> dict:
+                perf: dict[str, Any] | None = None, since: float | None = None, tz=None) -> dict:
+    """`since` — начало суток сводки (live: сейчас − 24 ч). Журнал live один на объект и копится неделями —
+    без `since` «сводка за день» считала посадки и алерты за всё время (найдено в B7)."""
     from qonaq.events.store import EventStore
+    from qonaq.health.downtime import downtime, downtime_lines
 
     store = EventStore(run_dir / "events.sqlite")
     try:
@@ -96,7 +102,12 @@ def build_daily(run_dir: Path, site_name: str, status: dict[str, Any], frames: l
         fb = store.feedback()
     finally:
         store.close()
-    text = summary_text(site_name, status, events, alerts, fb, perf)
+    if since is not None:
+        events = [e for e in events if e["ts"] >= since]
+        alerts = [a for a in alerts if _ts(a) is None or _ts(a) >= since]
+        fb = [f for f in fb if _ts(f) is None or _ts(f) >= since]
+    gaps = downtime_lines(downtime(events, since=since), tz)
+    text = summary_text(site_name, status, events, alerts, fb, perf, gaps)
     out = run_dir / "daily"
     out.mkdir(exist_ok=True)
     stamp = time.strftime("%Y%m%d_%H%M")
@@ -106,6 +117,14 @@ def build_daily(run_dir: Path, site_name: str, status: dict[str, Any], frames: l
     (out / f"captions_{stamp}.json").write_text(json.dumps([c for _, c in frames], ensure_ascii=False, indent=1),
                                                encoding="utf-8")
     return {"text": text, "frames": frames, "dir": str(out)}
+
+
+def _ts(row: dict) -> float | None:
+    for k in ("sent_wall", "wall", "ts", "created"):
+        v = row.get(k)
+        if isinstance(v, int | float):
+            return float(v)
+    return None
 
 
 def send_daily(sender, daily: dict) -> None:

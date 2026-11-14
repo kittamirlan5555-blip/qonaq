@@ -354,10 +354,10 @@ def cmd_live(args) -> int:
 
             import uvicorn
 
-            from qonaq.api.app import create_app
+            from qonaq.api.app import create_app, graceful_server
 
             print(f"Панель: http://{host}:{port}   (Ctrl+C — остановить)")
-            server = uvicorn.Server(uvicorn.Config(create_app(service), host=host, port=port, log_level="warning"))
+            server = graceful_server(uvicorn.Config(create_app(service), host=host, port=port, log_level="warning"))
             if args.duration:
                 threading.Timer(args.duration, lambda: setattr(server, "should_exit", True)).start()
             server.run()
@@ -641,6 +641,21 @@ def cmd_health(args) -> int:
               f"unknown {100 * c.get('unknown_share', 0):.0f}%")
     if fb:
         print(f"Отметок «неверно»: {len(fb)}")
+    from qonaq.health.downtime import downtime, downtime_lines
+
+    tz = None
+    if args.site:
+        try:
+            from zoneinfo import ZoneInfo
+
+            tz = ZoneInfo(load_site(args.site).business.timezone)
+        except Exception:  # noqa: BLE001
+            tz = None
+    gaps = downtime(events)  # по журналу — переживает перезапуски (health.json — только последний процесс)
+    if gaps:
+        print("Простои по журналу (heartbeat):")
+        for ln in downtime_lines(gaps, tz, limit=20):
+            print(f"  {ln}")
     if args.daily:
         from qonaq.alerts.telegram import sender_from_env
         from qonaq.health.daily import build_daily, send_daily
