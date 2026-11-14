@@ -494,3 +494,16 @@ def test_table_signals_dishes_one_sided():
     assert sig.update(frame, 2.0, [(30, 30, 60, 90)], [cup])["T1"] == [("dishes", None)]  # стол закрыт человеком
     th2 = RestaurantThresholds(use_dish_detection=True, dish_absent_is_clean=True)
     assert TableSignals(zs, th2).update(frame, 0.0, [], [])["T1"] == [("dishes", False)]
+
+
+def test_blind_gap_does_not_count_towards_no_waiter():
+    """S1: камера отвалилась на 2 минуты сразу после посадки — алерт «нет официанта» только после 3 минут,
+    которые система действительно видела."""
+    m = machine()
+    tl = seated(Timeline(m))
+    tl.t += 120  # обрыв: наблюдений нет 2 минуты
+    tl.run(m.al.no_waiter_s - 60, guests=G)
+    assert "no_waiter" not in tl.alerts()
+    tl.run(80, guests=G)
+    assert tl.alerts() == ["no_waiter"]
+    assert tl.of("alert")[0].payload["blind_s"] >= 119

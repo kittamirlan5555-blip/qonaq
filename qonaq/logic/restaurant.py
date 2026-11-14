@@ -61,6 +61,7 @@ class _Session:
     guest_confirmed: bool = False
     conf_sum: float = 0.0  # W8: накопленная уверенность ролей гостей за сессию
     conf_n: int = 0
+    blind_s: float = 0.0  # S1: сколько секунд сессии камера не видела (обрыв) — не входит в таймеры алертов
 
     def alert_conf(self) -> dict[str, Any]:
         """Поля уверенности для алерта (W8): гости подтверждены ролью и средняя уверенность ролей."""
@@ -98,6 +99,7 @@ class TableMachine:
         self._absent_visits: list[_Episode] = []  # визиты, пока гостей нет на месте (уборка или визит?)
         self._left_ts: float | None = None
         self._dirty_alerted = False
+        self._dirty_ref: float | None = None
         self._left_conf: dict[str, Any] | None = None
         self._clean_since: float | None = None
         self._n_guest = 0
@@ -138,8 +140,23 @@ class TableMachine:
         return max(since, s.seated_ts) if s is not None else since
 
     # ------------------------------------------------------------------ main
+    def _on_gap(self, a: float, b: float) -> None:
+        """Наблюдений не было с a по b (обрыв камеры): таймеры алертов не должны считать это время."""
+        s = self._session
+        if s is not None:
+            s.blind_s += b - a
+            if self.state == TableState.SERVED:
+                # официант мог подойти, пока мы не видели — отсчёт «давно не подходили» заново
+                s.last_visit_ts = max(s.last_visit_ts or s.served_ts or s.seated_ts, b)
+        if self.state == TableState.NEEDS_CLEANING:
+            self._dirty_ref = b  # могли убрать вслепую: «не убран N мин» считаем с возвращения картинки
+
     def update(self, obs: ZoneObservation) -> list[Event]:
         ts = obs.ts
+        prev = getattr(self, "_last_obs_ts", None)
+        if prev is not None and ts - prev > self.th.blind_gap_s:
+            self._on_gap(prev, ts)
+        self._last_obs_ts = ts
         self._ts = ts
         if self._first_ts is None:
             self._first_ts = ts
@@ -305,6 +322,7 @@ class TableMachine:
             self._set_state(TableState.SEATED_WAITING, seated_ts, out)
         self._left_ts = None
         self._dirty_alerted = False
+        self._dirty_ref: float | None = None
         return True
 
     def _step_waiting(self, ts: float, out: list[Event]) -> None:
@@ -319,10 +337,12 @@ class TableMachine:
             self._episode = None
             return
         waited = ts - s.seated_ts
-        if (waited >= self.al.no_waiter_s and "no_waiter" not in s.alerts and occ.state
+        if (waited - s.blind_s >= self.al.no_waiter_s and "no_waiter" not in s.alerts and occ.state
                 and self._episode is None):
             s.alerts.add("no_waiter")
-            out.append(self._ev(ts, "alert", kind="no_waiter", waited_s=round(waited, 1), **s.alert_conf()))
+            extra = {"blind_s": round(s.blind_s, 1)} if s.blind_s else {}
+            out.append(self._ev(ts, "alert", kind="no_waiter", waited_s=round(waited, 1), **extra,
+                                **s.alert_conf()))
 
     def _step_served(self, ts: float, obs: ZoneObservation, out: list[Event]) -> None:
         s = self._session
@@ -349,6 +369,7 @@ class TableMachine:
         self._left_ts = left_ts
         self._left_conf = s.alert_conf()
         self._dirty_alerted = False
+        self._dirty_ref: float | None = None
         # Уборка могла случиться, пока мы ждали подтверждения ухода (leave_min_s).
         cleaners = [ep for ep in self._absent_visits
                     if ep.last_seen >= left_ts and ep.duration >= self.th.clean_min_s]
@@ -379,7 +400,7 @@ class TableMachine:
             elif dirty_sig is True:
                 self._clean_since = None
         if self._left_ts is not None and not self._dirty_alerted:
-            dirty = ts - self._left_ts
+            dirty = ts - max(self._left_ts, getattr(self, "_dirty_ref", None) or self._left_ts)
             if dirty >= self.al.dirty_table_s:
                 self._dirty_alerted = True
                 out.append(self._ev(ts, "alert", kind="dirty_table", dirty_s=round(dirty, 1),

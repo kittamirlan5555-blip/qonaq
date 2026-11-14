@@ -141,7 +141,8 @@ def main(argv=None) -> int:
                   flush=True)
     lines = [f"Кадров: {len(gt['frames'])}, людей в разметке: {n_gt} (мелких < 160 px: "
              f"{sum(1 for f in gt['frames'] for g in f['boxes'] if g[3] - g[1] < 160)}); conf {args.conf}.", "",
-             "| вариант | вход | recall IoU≥0,5 | recall IoU≥0,3 | мелкие, recall IoU≥0,3 | precision IoU≥0,5 | мс/кадр |",
+             "| вариант | вход | recall IoU≥0,5 | recall IoU≥0,3 | мелкие, recall IoU≥0,3 | precision IoU≥0,5 "
+             "| мс/кадр |",
              "|---|---|---|---|---|---|---|"]
     for r in rows:
         lines.append(f"| `{r['variant']}` | {r['res']} | {r['recall50']:.2f} | {r['recall30']:.2f} | "

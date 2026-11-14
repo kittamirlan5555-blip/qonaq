@@ -333,3 +333,32 @@ HTTP Telegram); альбом из 5 кадров; правило уверенн�
   «Стойка хостес · 1 чел.», лента событий с визитом персонала T02 в 00:20 (это и есть спорный лишний визит из §1.3).
 - `runs/review_headless.png`: страница `calibrate review` на синтетике — карточки треков с размытыми лицами,
   авторазметка «гость/персонал», клик «гость» сохранился в `labels.json`.
+
+## 16. Поиск длинных реальных записей (S7, 14.11.2026, ~30 минут из 45 отведённых)
+
+Искал через GitHub Search API (`gh api search/repositories`, `search/code`) и проверял файлы через
+raw.githubusercontent.com (длительность — `ffprobe`). YouTube/HuggingFace/Kaggle/archive.org — не пробовал (недоступны).
+
+Запросы: «restaurant cctv video», «restaurant table occupancy», «waiter detection video», «cafe surveillance dataset»,
+«restaurant table turnover detection», «table occupancy detection yolo», «restaurant video analytics yolo»,
+«waiter tracking restaurant», «restaurant staff monitoring cctv», «dining table detection video», «restaurant
+surveillance yolov8», «cafe table occupancy video», репозитории ресторанной тематики размером > 20–40 МБ, поиск кода
+`VideoCapture … mp4` в ресторанных проектах. Найденные пути к роликам брались из README и кода.
+
+| Ролик (репозиторий / путь) | Что внутри | Длина | Годится? |
+|---|---|---|---|
+| alhadikhan/Waiter-Calling…/desk_video.mp4 | 1080p, стол крупным планом (поднятая рука) | 36 с | нет: < 2 мин, не зал |
+| sarah-majdoub/SmartRestaurantService/RestaurantTest.mp4 | 720p, тот же сток, что `topdown_cafe_people` | 10 с | нет |
+| AmeerHz/Table-Watch/images/restaurant.mp4 | 720p | 19 с | нет: < 2 мин |
+| 9059Rohith/smartseat-ai/demo/restaurant.mp4 | 720p | 10 с | нет |
+| CptGeo02/licenta/data/videos/vid1.mp4 | 636×360 | 35 с | нет |
+| khaerulroh25/Table-cleaning-alert (запись CCTV «Screen Recording …») | упомянута в README | — | в репозитории нет (404) |
+| SumanthBaina/restaurant-video-processor, Raafat-Nagy/Restaurant-Analysis, sanaulislamzihad/…, anuj1611/…, vanshika-0305/…, SriDesiyan/…, sidicksino/… | ролики упомянуты в README/коде | — | в репозиториях нет (404, вероятно .gitignore) |
+| celinewmk/Restaurant-People-Detection (1,3 ГБ) | кадры двух камер ресторана в PNG | ? | не проверено: имена кадров без API-листинга репозитория не узнать |
+| HARPLab/gastronomy_web_cam_analysis | анализ веб-камер ресторанов с разметкой ELAN | — | видео в репозитории нет |
+
+**Итог: подходящих записей (≥ 2 мин, неподвижная камера, официанты, полный цикл) не нашлось.** Ничего не добавлено
+в `scripts/fetch_videos.py`, новой разметки и eval нет. Реальных событий обслуживания в EVAL по-прежнему ноль —
+первая такая запись появится только с камер пилота (PILOT_RUNBOOK, неделя 1: ручная разметка 30 минут).
+Кандидат на потом: celinewmk/Restaurant-People-Detection — если владелец даст доступ к API для этого репозитория
+или скачает архив вручную, кадры двух камер ресторана можно склеить в ролик и проверить.
