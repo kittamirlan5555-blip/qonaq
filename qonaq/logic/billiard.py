@@ -57,6 +57,9 @@ class BilliardTableMachine:
         self.lamp = PresenceFilter(self.th.lamp_window_s, 0.7, 0.3)
         self.covered = PresenceFilter(self.th.covered_window_s, 0.8, 0.2)
         self._lamp_known = False
+        self._has_verify = False
+        self._verdict: tuple[float, bool] | None = None
+        self._pending: list[_Episode] = []
 
     # ------------------------------------------------------------------ helpers
     def _set_state(self, new: BState, ts: float, out: list[Event], **payload: Any) -> None:
@@ -73,12 +76,15 @@ class BilliardTableMachine:
         if self._cur is not None:
             self._cur.start += d
             self._cur.end += d
-        for e in self._recent:
+        for e in list(self._recent) + self._pending:
             e.start += d
             e.end += d
         if self._session is not None:
             self._session["last_end"] += d
             self._session["blind_s"] += d
+            for e in self._session["resume"]:
+                e.start += d
+                e.end += d
         self.lamp.on_gap(a, b)
         self.covered.on_gap(a, b)
 
@@ -89,14 +95,50 @@ class BilliardTableMachine:
         th = self.th
         if ep.end - ep.start < th.episode_min_s or ep.frames < th.episode_min_frames:
             return
+        if not self._has_verify:  # видео-слой без проверки расклада (или синтетический таймлайн) — сразу
+            self._accept(ep, out)
+        elif self._verdict is not None and self._verdict[0] >= ep.end:
+            if self._verdict[1]:
+                self._accept(ep, out)
+        else:
+            self._pending.append(ep)
+
+    def _resolve(self, ts: float, out: list[Event], verdict: bool | None) -> None:
+        """Вердикт видео-слоя «шары легли по-другому» решает судьбу эпизодов, закончившихся до него."""
+        keep = []
+        for ep in self._pending:
+            if verdict is not None and ep.end <= ts:
+                if verdict:
+                    self._accept(ep, out)
+            elif ts - ep.end > self.th.verify_timeout_s:
+                self._accept(ep, out)  # вердикта нет (стол всё время занят руками) — засчитываем как есть
+            else:
+                keep.append(ep)
+        self._pending = keep
+
+    def _accept(self, ep: _Episode, out: list[Event]) -> None:
+        th = self.th
         self._recent.append(ep)
         if self._session is not None:
             s = self._session
             gap = ep.start - s["last_end"]
             if gap >= th.idle_s:
-                s["pauses"].append(round(gap, 1))
+                # после паузы одиночный эпизод сессию не продлевает (артефакт, кто-то толкнул шар) — нужен
+                # второй в пределах resume_window_s: тогда оба засчитываются задним числом
+                s["resume"] = [e for e in s["resume"] if ep.end - e.start <= th.resume_window_s] + [ep]
+                if len(s["resume"]) < th.resume_episodes:
+                    return
+                first = s["resume"][0]
+                s["pauses"].append(round(first.start - s["last_end"], 1))
+                s["episodes"] += len(s["resume"])
+                s["last_end"] = max(s["last_end"], ep.end)
+                s["resume"] = []
+                if self.state == BState.PAUSED:
+                    self._set_state(BState.IN_PLAY, first.start, out)
+                return
             s["last_end"] = max(s["last_end"], ep.end)
             s["episodes"] += 1
+            s["resume"] = []
             if self.state == BState.PAUSED:
                 self._set_state(BState.IN_PLAY, ep.start, out)
             return
@@ -105,7 +147,7 @@ class BilliardTableMachine:
         if len(self._recent) >= th.start_episodes:
             first = self._recent[0]
             self._session = {"start": first.start, "last_end": ep.end, "episodes": len(self._recent),
-                             "pauses": [], "blind_s": 0.0, "lamp_off_seen": False}
+                             "pauses": [], "blind_s": 0.0, "lamp_off_seen": False, "resume": []}
             out.append(Event(first.start, self.zone_id, "game_started",
                              {"start": round(first.start, 3), "detected_ts": round(ep.end, 3),
                               "episodes": len(self._recent)}))
@@ -154,6 +196,16 @@ class BilliardTableMachine:
                     self._close_episode(out)
                     self._end_session(ts, "covered", out)
 
+        # проверка расклада шаров после движения (видео-слой): подтверждает или отменяет эпизоды
+        if f is not None and f.layout_changed is not None:
+            self._has_verify = True
+            self._verdict = (ts, f.layout_changed)
+            if self._cur is not None:  # стол успокоился — эпизод кончился, даже если разрыв < episode_gap_s
+                self._close_episode(out)
+            self._resolve(ts, out, f.layout_changed)
+        elif self._pending:
+            self._resolve(ts, out, None)
+
         # эпизоды движения
         usable = f is not None and f.motion is not None and not f.global_change and not self.covered.state
         if self._cur is not None and ts - self._cur.end > th.episode_gap_s:
@@ -179,6 +231,7 @@ class BilliardTableMachine:
         """Конец записи / штатная остановка: открытая сессия закрывается по последнему эпизоду."""
         out: list[Event] = []
         self._close_episode(out)
+        self._pending = []  # без вердикта к концу записи — не засчитываем
         self._end_session(ts, "shutdown", out)
         return out
 

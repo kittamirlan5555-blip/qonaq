@@ -60,7 +60,12 @@ class FeltAnalyzer:
         self.ball_area = np.pi * (self.ball_d / 2) ** 2
         self._prev: np.ndarray | None = None
         self._prev_med: float | None = None
-        self._bg: np.ndarray | None = None  # фон пустого стола (медленное среднее) — чтобы видеть руку целиком
+        self._bg: np.ndarray | None = None
+        self._rest: np.ndarray | None = None  # сукно в покое (для проверки «шары легли по-другому»)
+        self._rest_busy = np.zeros(self.mask.shape, bool)
+        self._quiet = 0
+        self._active = False
+        self.last_layout_areas: list[float] = []  # фон пустого стола (медленное среднее) — чтобы видеть руку целиком
         self._lamp_ref = 0.0
         self._band_ref = 0.0
         self._hue_ref: float | None = None
@@ -106,7 +111,8 @@ class FeltAnalyzer:
         if prev is None or prev_med is None:
             return FeltSignal(motion=None, lamp_on=lamp_on, covered=covered)
         if abs(med - prev_med) > th.global_shift * max(prev_med, 10.0):
-            self._bg = None  # свет сменился — фон заново
+            self._bg = None  # свет сменился — фон и снимок покоя заново
+            self._rest = None
             return FeltSignal(motion=None, global_change=True, lamp_on=lamp_on, covered=covered)
         if covered:
             return FeltSignal(motion=None, lamp_on=lamp_on, covered=True)
@@ -124,7 +130,11 @@ class FeltAnalyzer:
         a_bg = np.where(fg > 0, th.bg_rate_fg, th.bg_rate)[..., None]
         self._bg += a_bg * (cur - self._bg)
 
-        diff = (np.abs(cur - prev).max(axis=2) > th.diff_px).astype(np.uint8) * 255
+        d = np.abs(cur - prev).max(axis=2)
+        # порог по шуму: сильный шум матрицы/сжатия (тёмный зал, плохой субпоток) даёт пятна размером с шар
+        noise = 1.4826 * float(np.median(d[inside]))
+        thr = max(th.diff_px, th.noise_k * noise)
+        diff = (d > thr).astype(np.uint8) * 255
         diff = cv2.morphologyEx(diff, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
         diff = cv2.morphologyEx(diff, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
         n, lab, stats, _ = cv2.connectedComponentsWithStats(diff, 8)
@@ -151,9 +161,42 @@ class FeltAnalyzer:
             small = [i for i in small if not near[lab == i].any()]
         score = float(sum(stats[i][4] for i in small) / self.ball_area)
         balls = self._count_balls(bgr) if lamp_on else None
-        self.last_debug = {"med": med, "small": len(small), "intrusion": intrusion, "score": score}
+        layout = self._layout(cur, bool(small), large, thr)
+        self.last_debug = {"thr": round(thr, 1), "med": med, "small": len(small), "intrusion": intrusion,
+                           "score": score, "layout": layout}
         return FeltSignal(motion=bool(small), intrusion=intrusion, lamp_on=lamp_on, covered=covered,
-                          balls=balls, score=round(score, 2))
+                          balls=balls, score=round(score, 2), layout_changed=layout)
+
+    def _layout(self, cur: np.ndarray, moving: bool, large: np.ndarray, thr: float) -> bool | None:
+        """Проверка эпизода: после движения шары легли по-другому? Снимок «стол в покое» до и после.
+
+        Удар всегда переставляет шары (хотя бы биток). Артефакты сжатия, мерцание, рука над столом — нет:
+        после них сукно снова как было. Возвращает True/False один раз — на первом спокойном кадре после
+        движения (rest_frames кадров без движения); иначе None.
+        """
+        th = self.th
+        self._quiet = 0 if moving else self._quiet + 1
+        if moving:
+            self._active = True
+        if self._quiet < th.rest_frames:
+            return None
+        k = int(2 * self.ball_d) * 2 + 1
+        busy = cv2.dilate(large, np.ones((k, k), np.uint8)) > 0  # под рукой/человеком не сравниваем
+        verdict = None
+        if self._active and self._rest is not None:
+            d = np.abs(cur - self._rest).max(axis=2)
+            ch = ((d > max(th.layout_px, thr)) & (self.inner > 0) & ~busy & ~self._rest_busy).astype(np.uint8)
+            ch = cv2.morphologyEx(ch, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
+            n, _, st, _ = cv2.connectedComponentsWithStats(ch, 8)
+            areas = st[1:, 4] / self.ball_area if n > 1 else np.array([])
+            verdict = bool((areas >= th.layout_min_area).any())
+            self.last_layout_areas = sorted(areas.round(2).tolist(), reverse=True)[:5]
+        if self._active and self._rest is None:
+            verdict = None
+        if not busy.any() or self._rest is None or self._active:
+            self._rest, self._rest_busy = cur.copy(), busy
+        self._active = False
+        return verdict
 
     def _count_balls(self, bgr: np.ndarray) -> int:
         lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB).astype(np.float32)

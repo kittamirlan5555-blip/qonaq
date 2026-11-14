@@ -21,6 +21,8 @@ class FeltSignal:
     covered: bool | None = None  # сукно не видно (накрыли/закрыли)
     balls: int | None = None  # сколько мелких контрастных пятен на сукне (вспомогательно)
     score: float = 0.0  # площадь «шаровых» пятен движения, в площадях шара
+    # после движения стол снова в покое: шары легли по-другому (True) / как были (False); None — не этот кадр
+    layout_changed: bool | None = None
 
 
 @dataclass(frozen=True)

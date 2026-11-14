@@ -20,11 +20,26 @@ VIDEOS = {
     "foodcourt_preannotated.mp4": "MohammedAlown/ai-restaurant-monitor/main/docs/demo/food-court-detection.mp4",
 }
 
+# Бильярд (SPRINT3 B4) — в data/videos/billiard/. Чужие записи: только для внутренней проверки видео-слоя сукна.
+BILLIARD = {
+    # Реальный стол сверху (вебкамера над любительским столом), 1080p, 38 с: 4 удара, прицеливание кием.
+    # Репозиторий louisgeisler/Billard — лицензия в репозитории не указана.
+    "louisgeisler_NOdebug.mp4": "louisgeisler/Billard/main/NOdebug.mp4",
+}
+# Клипы ударов из трансляций (YouTube) из набора FedericoPivotto/billiard-video-analysis (код MIT, видео — чужие
+# трансляции): 1024×576, 5 с, разные ракурсы (сверху, под углом).
+for _g in (1, 2, 3, 4):
+    for _c in (1, 2):
+        BILLIARD[f"fp_game{_g}_clip{_c}.mp4"] = (f"FedericoPivotto/billiard-video-analysis/main/dataset/"
+                                                 f"game{_g}_clip{_c}/game{_g}_clip{_c}.mp4")
+
 
 def main() -> None:
     out = Path(__file__).resolve().parents[1] / "data" / "videos"
     out.mkdir(parents=True, exist_ok=True)
-    for name, path in VIDEOS.items():
+    (out / "billiard").mkdir(exist_ok=True)
+    items = list(VIDEOS.items()) + [(f"billiard/{k}", v) for k, v in BILLIARD.items()]
+    for name, path in items:
         dst = out / name
         if dst.exists() and dst.stat().st_size > 0:
             print(f"skip {name}")

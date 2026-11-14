@@ -134,6 +134,8 @@ class BilliardThresholds(_Model):
     start_window_s: float = 300.0  # T
     idle_s: float = 240.0
     pause_max_s: float = 600.0  # P: паузы короче не рвут сессию
+    resume_episodes: int = 2  # после паузы ≥ idle_s сессию продлевают только 2 эпизода…
+    resume_window_s: float = 180.0  # …в пределах 3 минут (одиночный «толчок» — нет)
     blind_gap_s: float = 15.0  # кадров нет дольше — обрыв камеры, время «замораживается» (как D-035)
     lamp_window_s: float = 10.0
     covered_window_s: float = 20.0
@@ -144,7 +146,12 @@ class BilliardThresholds(_Model):
     # Видео-слой (qonaq/billiard/felt.py)
     felt_width: int = 192  # кроп сукна приводится к этой ширине
     diff_px: float = 18.0  # порог |разницы| после выравнивания яркости
-    ball_area_min: float = 0.25  # площадь пятна движения в «площадях шара»
+    rest_frames: int = 3  # столько кадров без движения — «стол в покое», сравниваем расклад шаров
+    layout_px: float = 35.0  # шар против сукна контрастнее артефактов сжатия
+    layout_min_area: float = 0.6  # изменение расклада — пятно ≥ 0,6 площади шара
+    verify_timeout_s: float = 60.0  # нет вердикта по раскладу так долго — эпизод засчитывается как есть
+    noise_k: float = 5.0  # порог разности не ниже noise_k × шум (робастная σ разности соседних кадров)
+    ball_area_min: float = 0.5  # площадь пятна движения в «площадях шара»
     ball_area_max: float = 8.0
     ball_diameter_frac: float = 0.022  # диаметр шара / длинная сторона сукна (пул 57 мм / 2,54 м)
     margin_frac: float = 0.06  # полоса вокруг сукна (борта), доля ширины: пятно, заходящее в неё, — не шар

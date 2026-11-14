@@ -24,6 +24,14 @@ _Статус задач — таблица в `SPRINT3.md`; цифры — `doc
 - Тесты: `tests/test_billiard.py` (11 таймлайнов из B2 + 4 на видео-слой). Синтетика: `python -m qonaq billiard synth
   configs/synth_billiard/evening.yaml --run` — IoU 0,999 (EVAL §19; синтетика своя — это не оценка качества).
 
+### B4. Данные и проверка — ✅ (реальных данных мало — честно)
+- Поиск на GitHub (~30 мин): 1 реальная запись стола сверху (38 с) + 8 клипов ударов из трансляций (по 5 с);
+  ни «пустого стола», ни «людей рядом без игры», ни зала целиком (EVAL §21, `docs/DATA_SOURCES.md`).
+- На реальной записи: движение шаров на 74% кадров ударов (2 кадр/с), 0 ложных при прицеливании, сессия
+  IoU 0,76 (последний удар у самого конца записи не подтверждён). Синтетика трёх видов: `evening`/`topview_lights`
+  0,999, «трудная» `hard_far` (640×360, шум, CRF 32) — 0,92 после D-038 (до — 0,52).
+- `configs/synth_billiard/*.yaml` — сценарии; `python -m qonaq billiard synth <yaml> --run` — рендер + прогон + оценка.
+
 ### B3. Сверка с учётом — ✅
 - `python -m qonaq reconcile --events … --sessions paid.csv [--map tables.yaml] [--site …]` → `reconcile.html`,
   `reconcile.json`, `reconcile_telegram.txt` (`--send` — в чат владельца заведения). Бильярд: «игра без

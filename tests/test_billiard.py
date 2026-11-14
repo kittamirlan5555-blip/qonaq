@@ -221,3 +221,49 @@ def test_felt_flicker_and_room_lights_do_not_move_balls():
     _, sig = _felt_run([{"lights_off": [10, 25]}], flicker=0.06, view="top")
     for k in ("B1", "B2"):
         assert _frames(sig[k], 0, 40, lambda s: s.motion) == 0
+
+
+def _with_verdicts(tl: TL, changed: bool, after: float = 2.0):
+    """Видео-слой после каждого эпизода движения сообщает, легли ли шары по-другому."""
+    sig = tl.sig
+    for i in range(1, len(sig)):
+        if sig[i - 1]["motion"] and not sig[i]["motion"]:
+            j = min(len(sig) - 1, i + int(after * FPS))
+            sig[j]["layout_changed"] = changed
+    return tl
+
+
+def test_layout_verdict_false_drops_artifact_episodes():
+    """Артефакты сжатия/мерцание дают «эпизоды», но шары после них лежат как лежали — сессии нет."""
+    tl = _with_verdicts(TL(1200).game(100, 1000, every=40), changed=False)
+    assert games(tl.run(BilliardTableMachine("B1"))) == []
+
+
+def test_layout_verdict_true_keeps_game_and_splits_continuous_motion():
+    """Удары каждые 6 с: движение почти непрерывно (разрыв < 3 с), но после каждого удара стол успокаивается —
+    это отдельные эпизоды, игра начинается."""
+    tl = TL(300)
+    for t in range(20, 200, 6):
+        tl.set(t, t + 4, motion=True)
+        tl.set(t + 4, t + 6, motion=False)
+        tl.set(t + 5.5, t + 6, layout_changed=True)
+    evs = tl.run(BilliardTableMachine("B1"))
+    assert [e.type for e in evs if e.type == "game_started"] == ["game_started"]
+
+
+def test_layout_verdict_timeout_accepts():
+    """Видео-слой проверку расклада умеет, но после этих эпизодов вердикта нет (руки над столом) — засчитываем
+    через verify_timeout_s."""
+    tl = TL(1500).set(10, 13, motion=True).set(16, 16.5, layout_changed=False)  # видео-слой с проверкой
+    tl.game(200, 1200, every=40)
+    g = games(tl.run(BilliardTableMachine("B1", th(verify_timeout_s=30))))
+    assert len(g) == 1 and g[0]["start"] == 200.0
+
+
+def test_isolated_episodes_after_pause_do_not_extend_session():
+    """После игры раз в 4–5 минут случайный «эпизод» (артефакт, кто-то задел шар) — сессия не тянется."""
+    tl = TL(3600).game(100, 1000, every=40)
+    for t in (1300, 1580, 1860):
+        tl.set(t, t + 3, motion=True)
+    g = games(tl.run(BilliardTableMachine("B1")))
+    assert len(g) == 1 and g[0]["end"] < 1010 and g[0]["pauses"] == []
