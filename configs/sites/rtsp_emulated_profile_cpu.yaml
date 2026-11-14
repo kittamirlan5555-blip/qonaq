@@ -1,0 +1,27 @@
+# Профиль «CPU мини-ПК» (profile_cpu_minipc.yaml) вживую на 2 «камерах» эмулятора регистратора (S2, EVAL §15).
+#   1) python scripts/quantize_detector.py yolox_m      (один раз: data/weights/yolox_m_int8.onnx)
+#   2) python scripts/emulate_cameras.py --videos data/videos/cctv_restaurant_corner.mp4 data/videos/cctv_terrace_cafe.mov
+#   3) python -m qonaq live --site configs/sites/rtsp_emulated_profile_cpu.yaml --no-web --duration 600
+# Смотреть runs/live_rtsp_emulated_profile_cpu/live_stats.jsonl: fps по камерам должен держаться около process_fps.
+site_id: rtsp_emulated_profile_cpu
+name: Эмуляция регистратора, профиль CPU мини-ПК (2 камеры)
+profile: restaurant
+process_fps: 2
+cameras:
+  - id: cctv_restaurant_corner
+    name: Зал, угол (Hikvision 102)
+    source: rtsp://${QONAQ_NVR_USER:-admin}:${QONAQ_NVR_PASSWORD:-qonaq12345}@${QONAQ_NVR_IP:-127.0.0.1}:8554/Streaming/Channels/102
+    zones: configs/zones/cctv_restaurant_corner.yaml
+  - id: cctv_terrace_cafe
+    name: Веранда (Hikvision 202)
+    source: rtsp://${QONAQ_NVR_USER:-admin}:${QONAQ_NVR_PASSWORD:-qonaq12345}@${QONAQ_NVR_IP:-127.0.0.1}:8554/Streaming/Channels/202
+    zones: configs/zones/cctv_terrace_cafe.yaml
+detector:
+  backend: onnx
+  onnx_model: data/weights/yolox_m_int8.onnx
+  onnx_tiles: 2
+  roi_tiles: true
+  detect_every: 2
+health:
+  check_every_s: 20
+  stats_every_s: 60
