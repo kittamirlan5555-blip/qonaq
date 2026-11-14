@@ -244,6 +244,17 @@ def test_cleaning_during_leave_confirmation_window():
     assert tl.of("cleaned")[0].payload["cleanup_time_s"] == pytest.approx(25.0, abs=1.5)
 
 
+def test_cleaning_visit_spanning_leave_confirmation():
+    """S5 (нашла синтетическая неделя): официант начал убирать до подтверждения ухода и закончил после —
+    раньше такой визит терялся, стол висел «не убран» до следующих гостей и давал ложный алерт."""
+    tl = seated(Timeline(machine())).run(6, guests=G, staff=W).run(60, guests=G)
+    leave = tl.m.th.leave_min_s
+    tl.run(leave - 10).run(30, staff=W).run(40)  # визит идёт с L+80 до L+110, уход подтверждается на L+90
+    assert tl.m.state == TableState.FREE
+    assert tl.types() == ["seated", "served", "left", "cleaned"]
+    assert "dirty_table" not in tl.alerts()
+
+
 def test_visit_while_guests_away_is_a_visit_if_they_return():
     tl = seated(Timeline(machine())).run(6, guests=G, staff=W).run(60, guests=G)
     tl.run(10).run(12, staff=W).run(20).run(30, guests=G)  # гости выходили, официант подходил

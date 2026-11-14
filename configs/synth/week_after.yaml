@@ -1,0 +1,16 @@
+# Синтетическая «неделя после» (S5): тот же поток гостей, но администратор реагирует на алерты —
+# подходят быстрее, особенно в пик, и быстрее убирают. Другие seed — другие гости.
+name: week_after
+description: "После: те же 10 столов и поток гостей; в пик подходят и убирают быстрее."
+seed: 22
+start: "2026-11-23"   # понедельник, недели 3–4 пилота
+days: 7
+tables: 10
+open_h: [11, 23]
+response_median_s: 105
+response_sigma: 0.5
+response_peak_mult: 1.35
+patience_median_s: 600
+cleanup_median_s: 130
+cleanup_sigma: 0.55
+cleanup_peak_mult: 1.4

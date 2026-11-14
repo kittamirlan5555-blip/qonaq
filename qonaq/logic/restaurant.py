@@ -202,6 +202,11 @@ class TableMachine:
             if ep.has_staff and not ep.confirmed and ep.duration >= need:
                 ep.confirmed = True
                 self._on_visit(ep, ts, out, final=False)
+            elif (ep.has_staff and ep.confirmed and not ep.emitted and self.state == TableState.NEEDS_CLEANING
+                  and self._left_ts is not None and ep.last_seen - max(ep.start, self._left_ts) >= need):
+                # Визит начался до подтверждения ухода (засчитан как «визит при обслуживании»), а уход
+                # подтвердился посреди него: это уборка. Раньше такой визит терялся (S5, синтетическая неделя).
+                self._on_visit(ep, ts, out, final=False)
         elif ep is not None and ts - ep.last_seen > self.th.visit_gap_s:
             self._episode = None
             self._finish_episode(ep, ts, out)
