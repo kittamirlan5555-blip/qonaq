@@ -30,6 +30,8 @@ class Key:
 
 
 def key_moments(store: EventStore, zone: str = "T1") -> list[Key]:
+    """Титры по событиям журнала — в момент, когда событие видно на панели (`detected_ts`), а не в момент,
+    к которому логика его потом отнесла (посадка подтверждается через seat_min_s, уход — через leave_min_s)."""
     from qonaq.logic.base import fmt_mmss
 
     keys: list[Key] = []
@@ -37,17 +39,23 @@ def key_moments(store: EventStore, zone: str = "T1") -> list[Key]:
         if e["zone_id"] != zone:
             continue
         p = e["payload"]
+        seen = float(p.get("detected_ts", e["ts"]))
         if e["type"] == "seated":
-            keys.append(Key(e["ts"], "Гости сели — система начала отсчёт"))
+            if seen - e["ts"] > 5:
+                keys.append(Key(e["ts"], "Гости садятся — проверяем, что это не прохожие"))
+            keys.append(Key(seen, "Гости сели — отсчёт ожидания с момента посадки"))
         elif e["type"] == "alert" and p.get("kind") == "no_waiter":
-            keys.append(Key(e["ts"], f"Ждут {fmt_mmss(p.get('waited_s', 180))} → алерт администратору в Telegram"))
+            keys.append(Key(seen, f"Ждут {fmt_mmss(p.get('waited_s', 180))} → алерт администратору в Telegram"))
         elif e["type"] == "served":
-            keys.append(Key(e["ts"], f"Официант подошёл: ожидание {fmt_mmss(p.get('response_time_s', 0))}"))
+            keys.append(Key(seen, f"Официант подошёл: ожидание {fmt_mmss(p.get('response_time_s', 0))}"))
+        elif e["type"] == "left":
+            # между фактическим уходом и подтверждением панель ещё держит гостей — объясняем почему
+            if seen - e["ts"] > 5:
+                keys.append(Key(e["ts"], f"Гости вышли — {fmt_mmss(seen - e['ts'])} ждём, не вернутся ли"))
         elif e["type"] == "state_change" and p.get("to") == "NEEDS_CLEANING":
-            # уход подтверждается через leave_min_s — титр в момент, когда это видно на панели
-            keys.append(Key(p.get("detected_ts", e["ts"]), "Гости ушли — стол не убран"))
+            keys.append(Key(seen, "Гости ушли — стол не убран"))
         elif e["type"] == "cleaned":
-            keys.append(Key(e["ts"], f"Стол убрали через {fmt_mmss(p.get('cleanup_time_s', 0))} — снова свободен"))
+            keys.append(Key(seen, f"Стол убрали через {fmt_mmss(p.get('cleanup_time_s', 0))} — снова свободен"))
     return sorted(keys, key=lambda k: k.ts)
 
 
@@ -124,7 +132,10 @@ def _frames(path: Path) -> tuple[list[np.ndarray], float]:
 
 
 def build_reel(synth_run: Path, real_run: Path | None, out: Path, target_synth_s: float = 26.0,
-               real_s: float = 8.0, scene_fps: float = 2.0) -> Path:
+               real_s: float = 8.0, scene_fps: float = 2.0, real_from: float = 0.0) -> Path:
+    """`real_from` — с какой секунды реальной записи брать кусок: в первые ~30 с статусы ещё не установились
+    (посадка подтверждается через seat_min_s, «сидели до старта» — через preexisting_grace_s), и ролик показал бы
+    людей за «свободными» столами."""
     frames, _ = _frames(synth_run / "demo.mp4")
     if not frames:
         raise FileNotFoundError(f"нет кадров в {synth_run / 'demo.mp4'}")
@@ -146,7 +157,7 @@ def build_reel(synth_run: Path, real_run: Path | None, out: Path, target_synth_s
         rf, rfps = _frames(real_run / "demo.mp4")
         n_out = int(real_s * FPS)
         for j in range(n_out):
-            i = min(len(rf) - 1, int(j / FPS * rfps))
+            i = min(len(rf) - 1, int((real_from + j / FPS) * rfps))
             sink.write(_overlay(_fit(rf[i]), "Реальная запись CCTV веранды кафе", "лица размыты · столы и статусы "
                                                                                     "— автоматически"))
     for _ in range(int(3 * FPS)):

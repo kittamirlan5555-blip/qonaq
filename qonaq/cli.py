@@ -91,6 +91,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--scenario", default="configs/synth/demo_reel.yaml")
     p.add_argument("--real", default="data/videos/cctv_terrace_cafe.mov", help="реальная запись для вставки")
     p.add_argument("--real-seconds", type=float, default=8.0)
+    p.add_argument("--real-from", type=float, default=36.0,
+                   help="с какой секунды реальной записи брать кусок (раньше статусы ещё не установились)")
     p.add_argument("--out", default="runs/demo_reel.mp4")
     p.add_argument("--rerun", action="store_true", help="пересчитать синтетику и реальный кусок заново")
     _add_common(p)
@@ -728,10 +730,11 @@ def cmd_demo_reel(args) -> int:
             rs = _site(args)
             rs.process_fps = args.fps or 4
             process_file(str(real), rs, out=str(real_run), mode="demo", blur=True,
-                         max_seconds=args.real_seconds + 4, write_video=True)
+                         max_seconds=args.real_from + args.real_seconds + 2, write_video=True)
     else:
         print(f"нет {real} — реальный кусок пропущен (python scripts/fetch_videos.py)")
-    out = build_reel(synth_run, real_run, Path(args.out), real_s=args.real_seconds, scene_fps=sc.fps)
+    out = build_reel(synth_run, real_run, Path(args.out), real_s=args.real_seconds, scene_fps=sc.fps,
+                     real_from=args.real_from)
     print(f"Демо-ролик: {out}")
     return 0
 

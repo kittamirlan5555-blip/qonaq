@@ -364,3 +364,29 @@ def test_detect_every_reuses_last_detections():
         n += len(pipe.step())
         time.sleep(0.001)
     assert det.calls == 3
+
+
+def test_reel_captions_follow_what_panel_shows():
+    """S6: титры демо-ролика — в момент, когда событие видно на панели (detected_ts), плюс пояснение задержки."""
+    from qonaq.events.store import EventStore
+    from qonaq.logic.base import Event
+    from qonaq.render.reel import key_moments, time_map
+
+    st = EventStore()
+    st.add([
+        Event(16, "T1", "seated", {"detected_ts": 34.5, "sid": 1}),
+        Event(196, "T1", "alert", {"kind": "no_waiter", "waited_s": 180, "detected_ts": 196, "sid": 1}),
+        Event(214, "T1", "served", {"response_time_s": 198, "detected_ts": 239, "sid": 1}),
+        Event(316, "T1", "left", {"detected_ts": 406, "sid": 1}),
+        Event(316, "T1", "state_change", {"to": "NEEDS_CLEANING", "detected_ts": 406, "sid": 1}),
+        Event(454, "T1", "cleaned", {"cleanup_time_s": 138, "detected_ts": 457, "sid": 1}),
+        Event(20, "T2", "seated", {"detected_ts": 30, "sid": 2}),  # другой стол — без титров
+    ])
+    keys = key_moments(st)
+    assert [k.ts for k in keys] == [16, 34.5, 196, 239, 316, 406, 457]
+    assert keys[0].text.startswith("Гости садятся") and keys[1].text.startswith("Гости сели")
+    assert "03:00" in keys[2].text and "03:18" in keys[3].text
+    assert "01:30" in keys[4].text and "не убран" in keys[5].text
+    tm = time_map(470, keys, target_s=26)
+    assert tm == sorted(tm) and tm[0] == 0 and tm[-1] < 470
+    assert 20 * 25 < len(tm) < 40 * 25  # 25 кадр/с выхода: синтетическая часть ~26 с, не минуты
