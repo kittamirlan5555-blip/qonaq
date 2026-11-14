@@ -390,3 +390,22 @@ def test_reel_captions_follow_what_panel_shows():
     tm = time_map(470, keys, target_s=26)
     assert tm == sorted(tm) and tm[0] == 0 and tm[-1] < 470
     assert 20 * 25 < len(tm) < 40 * 25  # 25 кадр/с выхода: синтетическая часть ~26 с, не минуты
+
+
+def test_health_warns_when_computer_is_too_slow():
+    """S2: живой CPU-профиль на 2 vCPU давал 1,37 кадр/с вместо 2 — health должен об этом сказать."""
+    from qonaq.health.monitor import HealthConfig
+
+    now = [0.0]
+    cfg = HealthConfig(target_fps=2.0, slow_window_s=60.0, stale_s=30.0)
+    frame = np.full((36, 64, 3), 128, np.uint8)
+    fast, slow = HealthMonitor(cfg, clock=lambda: now[0]), HealthMonitor(cfg, clock=lambda: now[0])
+    for i in range(200):  # 100 с: «быстрая» камера 2 кадр/с, «медленная» — 1,25
+        now[0] = i * 0.5
+        fast.observe_frame("a", now[0], frame + (i % 2))
+        if i % 8 in (0, 2, 4, 6, 7):
+            slow.observe_frame("b", now[0], frame + (i % 2))
+    assert not [i for i in fast.check() if i.kind == "slow_processing"]
+    issues = [i for i in slow.check() if i.kind == "slow_processing"]
+    assert issues and "не успевает" in issues[0].message and issues[0].data["t"] == 2.0
+    assert not [i for i in slow.check(live=False) if i.kind == "slow_processing"]  # файлы — не про скорость

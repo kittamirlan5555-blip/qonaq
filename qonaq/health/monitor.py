@@ -38,6 +38,10 @@ class HealthConfig:
     unknown_max: float = 0.5
     unknown_window_s: float = 600.0
     unknown_min_obs: int = 200
+    # S2: компьютер не успевает — обработанных кадров/с за окно меньше доли от process_fps (только live)
+    target_fps: float | None = None
+    slow_ratio: float = 0.75
+    slow_window_s: float = 300.0
 
 
 @dataclass
@@ -64,6 +68,8 @@ MESSAGES = {
     "short_sessions": "стол {zone}: {n} сессий подряд короче {s:.0f} с — детекция мигает?",
     "no_staff_visits": "за смену ни одного визита персонала при {n} посадках — роли не работают?",
     "unknown_share": "роль не определена у {p:.0f}% наблюдений людей",
+    "slow_processing": "обрабатывается {f:.1f} кадр/с вместо {t:g} — компьютер не успевает (снизьте process_fps, "
+                       "detect_every 2 или профиль детектора полегче; EVAL §15)",
 }
 
 
@@ -84,6 +90,7 @@ class _Cam:
         self.seated_ts: dict[str, float] = {}
         self.outages: list[tuple[float, float]] = []  # (начало, конец) по wall clock — уже закончившиеся обрывы
         self.frames = 0
+        self.walls: deque = deque()  # wall clock обработанных кадров за slow_window_s
 
 
 class HealthMonitor:
@@ -107,6 +114,9 @@ class HealthMonitor:
             c.outages.append((c.last_wall, now))  # камера вернулась после обрыва — запоминаем эпизод
         c.last_wall = now
         c.frames += 1
+        c.walls.append(now)
+        while c.walls and c.walls[0] < now - self.cfg.slow_window_s:
+            c.walls.popleft()
         c.first_ts = ts if c.first_ts is None else c.first_ts
         c.last_ts = ts
         if frame is None:
@@ -176,6 +186,13 @@ class HealthMonitor:
         for cid, c in self._cams.items():
             if live and c.last_wall is not None and now - c.last_wall > cfg.stale_s:
                 out.append(self._issue("camera_down", cid, "error", s=now - c.last_wall))
+            if live and cfg.target_fps and c.walls:
+                span = now - c.walls[0]
+                recent_outage = any(b > now - cfg.slow_window_s for _, b in c.outages)
+                if span >= 0.9 * cfg.slow_window_s and not recent_outage and now - c.last_wall <= cfg.stale_s:
+                    fps = len(c.walls) / span
+                    if fps < cfg.slow_ratio * cfg.target_fps:
+                        out.append(self._issue("slow_processing", cid, f=fps, t=cfg.target_fps))
             if c.dark_since is not None and c.last_ts - c.dark_since >= cfg.dark_s:
                 out.append(self._issue("dark_frame", cid, s=c.last_ts - c.dark_since))
             if c.frozen_since is not None and c.last_ts - c.frozen_since >= cfg.frozen_s:
@@ -202,7 +219,7 @@ class HealthMonitor:
 
     def _issue(self, kind: str, cid: str, severity: str = "warn", zone: str = "", **kw) -> Issue:
         return Issue(kind, cid, zone, severity, MESSAGES[kind].format(zone=zone, **{"s": 0, "n": 0, "m": 0, "p": 0,
-                                                                                    **kw}), data=kw)
+                                                                                    "f": 0, "t": 0, **kw}), data=kw)
 
     def status(self, live: bool = True) -> dict[str, Any]:
         issues = self.check(live)

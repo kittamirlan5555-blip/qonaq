@@ -43,7 +43,7 @@ class LiveService:
         from qonaq.health.monitor import HealthConfig, HealthMonitor
         from qonaq.health.proc import CpuMeter
 
-        self.health = HealthMonitor(HealthConfig(stale_s=site.health.camera_stale_s))
+        self.health = HealthMonitor(HealthConfig(stale_s=site.health.camera_stale_s, target_fps=site.process_fps))
         for c in site.cameras:
             self.health.register(c.id)
         self._outages_seen: dict[str, int] = {}
