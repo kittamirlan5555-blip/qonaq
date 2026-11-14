@@ -267,3 +267,16 @@ def test_isolated_episodes_after_pause_do_not_extend_session():
         tl.set(t, t + 3, motion=True)
     g = games(tl.run(BilliardTableMachine("B1")))
     assert len(g) == 1 and g[0]["end"] < 1010 and g[0]["pauses"] == []
+
+
+def test_schematic_reel_scene_runs_real_logic(tmp_path):
+    """B6: схематичный ролик ресторана — настоящая логика на сцене-схеме (первые 4 минуты: посадка и алерт)."""
+    from qonaq.events.store import EventStore
+    from qonaq.render.schematic import run
+
+    out = run(tmp_path / "s", duration=240.0)
+    st = EventStore(out / "events.sqlite")
+    types = [(e["zone_id"], e["type"]) for e in st.events() if e["type"] != "state_change"]
+    st.close()
+    assert ("T1", "seated") in types and ("T1", "alert") in types and (out / "demo.mp4").stat().st_size > 0
+    assert not any(z == "T4" for z, _ in types)  # прохожий через зону Стола 4 — не посадка

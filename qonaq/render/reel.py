@@ -118,21 +118,50 @@ def _card(lines: list[tuple[str, int, bool]]) -> np.ndarray:
     return _overlay(img, None)
 
 
-def _frames(path: Path) -> tuple[list[np.ndarray], float]:
-    cap = cv2.VideoCapture(str(path))
-    fps = float(cap.get(cv2.CAP_PROP_FPS) or 2.0)
-    out = []
-    while True:
-        ok, f = cap.read()
-        if not ok:
-            break
-        out.append(f)
-    cap.release()
-    return out, fps
+class _Frames:
+    """Кадры ролика по номеру без загрузки в память (15 мин сцены с панелью 1280×720 — это ГБ). Номера кадров
+    в монтаже идут по возрастанию, поэтому читаем вперёд; назад — переоткрываем файл."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        cap = cv2.VideoCapture(str(path))
+        self.fps = float(cap.get(cv2.CAP_PROP_FPS) or 2.0)
+        self.n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        cap.release()
+        self._cap: cv2.VideoCapture | None = None
+        self._i = -1
+        self._cur: np.ndarray | None = None
+
+    def __len__(self) -> int:
+        return self.n
+
+    def __bool__(self) -> bool:
+        return self.n > 0
+
+    def __getitem__(self, i: int) -> np.ndarray:
+        i = max(0, min(i, self.n - 1))
+        if self._cap is None or i < self._i:
+            if self._cap is not None:
+                self._cap.release()
+            self._cap, self._i = cv2.VideoCapture(str(self.path)), -1
+        while self._i < i:
+            ok, f = self._cap.read()
+            if not ok:
+                self.n = max(1, self._i + 1)
+                break
+            self._i += 1
+            self._cur = f
+        return self._cur
+
+
+def _frames(path: Path) -> tuple[_Frames, float]:
+    f = _Frames(path)
+    return f, f.fps
 
 
 def build_reel(synth_run: Path, real_run: Path | None, out: Path, target_synth_s: float = 26.0,
-               real_s: float = 8.0, scene_fps: float = 2.0, real_from: float = 0.0) -> Path:
+               real_s: float = 8.0, scene_fps: float = 2.0, real_from: float = 0.0,
+               intro_sub: str = "Синтетическая сцена: фигуры вставлены в кадр пустого кафе") -> Path:
     """`real_from` — с какой секунды реальной записи брать кусок: в первые ~30 с статусы ещё не установились
     (посадка подтверждается через seat_min_s, «сидели до старта» — через preexisting_grace_s), и ролик показал бы
     людей за «свободными» столами."""
@@ -146,7 +175,7 @@ def build_reel(synth_run: Path, real_run: Path | None, out: Path, target_synth_s
     sink = VideoSink(out, FPS, crf=21)
     for _ in range(int(2.5 * FPS)):
         sink.write(_card([("Qonaq Vision", 64, True), ("Камеры зала считают, сколько гости ждут официанта", 30, False),
-                          ("Синтетическая сцена: фигуры вставлены в кадр пустого кафе", 22, False)]))
+                          (intro_sub, 22, False)]))
     for s in time_map(duration, keys, target_synth_s):
         i = min(len(frames) - 1, int(s * scene_fps))
         cur = [k for k in keys if k.ts <= s]
@@ -165,4 +194,57 @@ def build_reel(synth_run: Path, real_run: Path | None, out: Path, target_synth_s
                           ("Бесплатный пилот — 4 недели на ваших камерах", 26, False)]))
     sink.close()
     log.info("демо-ролик: %s (%d кадров, %.1f с)", out, sink.frames, sink.frames / FPS)
+    return out
+
+
+# ---------------------------------------------------------------------------------------------- бильярд (B6)
+def billiard_keys(store: EventStore, lean: list[tuple[str, float]] | None = None, paid: set[str] | None = None,
+                  names: dict[str, str] | None = None) -> list[Key]:
+    """Титры бильярдного ролика по журналу: игра началась / кончилась (в момент, когда это видно на панели)."""
+    from qonaq.logic.base import fmt_mmss
+
+    names = names or {}
+    paid = paid or set()
+    keys = [Key(t, f"{names.get(z, z)}: у стола человек, но шары стоят — стол свободен") for z, t in (lean or [])]
+    for e in store.events(types=["state_change"]):
+        if e["payload"].get("to") == "PAUSED" and e["zone_id"] in names:
+            keys.append(Key(e["ts"], f"{names[e['zone_id']]}: ударов нет 4 минуты — пауза (игра ещё не закончена)"))
+    for e in store.events(types=["game_started", "game_ended"]):
+        z, p = e["zone_id"], e["payload"]
+        seen = float(p.get("detected_ts", e["ts"]))
+        title = names.get(z, z)
+        if e["type"] == "game_started":
+            tail = "счётчик включён" if z in paid else "а сессии в учёте нет"
+            keys.append(Key(seen, f"{title}: удары по шарам — идёт игра, {tail}"))
+        else:
+            keys.append(Key(seen, f"{title}: шары стоят 10 минут — игра закончилась ({fmt_mmss(p['duration_s'])})"))
+    return sorted(keys, key=lambda k: k.ts)
+
+
+def build_billiard_reel(run: Path, out: Path, keys: list[Key], recon_lines: list[str], target_s: float = 30.0,
+                        scene_fps: float = 2.0) -> Path:
+    frames, _ = _frames(run / "demo.mp4")
+    if not frames:
+        raise FileNotFoundError(f"нет кадров в {run / 'demo.mp4'}")
+    duration = len(frames) / scene_fps
+    sink = VideoSink(out, FPS, crf=21)
+    for _ in range(int(2.5 * FPS)):
+        sink.write(_card([("Qonaq Vision для бильярдной", 56, True),
+                          ("Сколько часов игры проходит мимо счётчика", 30, False),
+                          ("Нарисованный зал; распознавание столов — настоящее, как в работе", 22, False)]))
+    for s in time_map(duration, keys, target_s, after=12.0):
+        i = min(len(frames) - 1, int(s * scene_fps))
+        cur = [k for k in keys if k.ts <= s]
+        cap = cur[-1].text if cur else "Камера над столами: система смотрит на сукно, не на людей"
+        sink.write(_overlay(_fit(frames[i]), cap, f"время сцены {int(s) // 60}:{int(s) % 60:02d}"))
+    card = [("Утром владельцу в Telegram — сверка с учётом", 30, True)] + [(x, 24, False) for x in recon_lines]
+    for _ in range(int(5 * FPS)):
+        sink.write(_card(card))
+    for _ in range(int(3 * FPS)):
+        sink.write(_card([("Видео не уходит из клуба", 34, True), ("Лица не распознаются — камера смотрит на сукно", 30,
+                                                                   True),
+                          ("Расхождение видео и учёта — не обвинение: каждую строку видно на записи", 22, False),
+                          ("Бесплатный месяц на ваших камерах", 26, False)]))
+    sink.close()
+    log.info("демо-ролик бильярда: %s (%d кадров, %.1f с)", out, sink.frames, sink.frames / FPS)
     return out

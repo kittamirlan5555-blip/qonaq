@@ -234,6 +234,15 @@ class DemoRenderer:
                 put_text(panel, str(n), (x, y), 24, color, bold=True)
                 put_text(panel, label, (x, y + 30), 12, GRAY)
             y += 62
+        if not tables and self.zones.by_type("billiard_table"):  # B2: бильярд — в игре / пауза / свободно
+            chips = [("в игре", summ.get("in_play", 0), BLUE), ("пауза", summ.get("paused", 0), YELLOW),
+                     ("свободно", summ.get("idle", 0), GREEN), ("лампы", summ.get("lamp_on", 0), GRAY)]
+            cw = (W - 40) // 4
+            for i, (label, n, color) in enumerate(chips):
+                x = 20 + i * cw
+                put_text(panel, str(n), (x, y), 24, color, bold=True)
+                put_text(panel, label, (x, y + 30), 12, GRAY)
+            y += 62
         cv2.line(panel, (20, y), (W - 20, y), (60, 60, 64), 1)
         y += 10
         rows = [z for z in self.zones.zones if z.type != "ignore"]
@@ -243,12 +252,13 @@ class DemoRenderer:
         fs = 16 if row_h >= 30 else 13
         for z in rows:
             snap = result.zone_states.get(z.id, {})
-            color = state_color(snap, self.site.alerts.no_waiter_s) if z.type == "table" else TYPE_COLOR[z.type]
+            tbl = z.type in ("table", "billiard_table")
+            color = state_color(snap, self.site.alerts.no_waiter_s) if tbl else TYPE_COLOR[z.type]
             cy = y + row_h // 2
             cv2.circle(panel, (30, cy), 6, color, -1, cv2.LINE_AA)
             put_text(panel, z.id, (46, cy - fs // 2 - 3), fs, WHITE, bold=True)
             status, timer = self._row_text(z, snap)
-            put_text(panel, status, (104, cy - fs // 2 - 3), fs, color if z.type == "table" else WHITE)
+            put_text(panel, status, (104, cy - fs // 2 - 3), fs, color if tbl else WHITE)
             put_text(panel, timer, (W - 20, cy - fs // 2 - 3), fs, WHITE, anchor="rt")
             y += row_h
         if self.alert_feed:
@@ -272,9 +282,8 @@ class DemoRenderer:
                 return status, fmt_mmss(snap.get("dirty_s", 0))
             return status, fmt_mmss(snap.get("state_s", 0))
         if z.type == "billiard_table":
-            lamp = snap.get("lamp_on")
-            extra = "" if lamp is None else (" · лампа горит" if lamp else " · лампа выкл.")
-            return f"{z.title} · {t('state.' + state) if state else ''}{extra}", fmt_mmss(snap.get("session_s", 0))
+            extra = " · лампа выкл." if snap.get("lamp_on") is False else ""
+            return f"{t('state.' + state) if state else ''}{extra}", fmt_mmss(snap.get("session_s", 0))
         label = z.name or t(f"zone.{z.type}")
         if z.type == "service_point":
             staffed = snap.get("staffed")

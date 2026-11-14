@@ -95,6 +95,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="с какой секунды реальной записи брать кусок (раньше статусы ещё не установились)")
     p.add_argument("--out", default="runs/demo_reel.mp4")
     p.add_argument("--rerun", action="store_true", help="пересчитать синтетику и реальный кусок заново")
+    p.add_argument("--billiard", action="store_true",
+                   help="ролик бильярдной (B6): процедурный зал → профиль billiard → строка сверки с учётом")
+    p.add_argument("--schematic", action="store_true",
+                   help="ресторан без чужих кадров (B6): схема зала сверху, фигуры-схемы; можно показывать")
     _add_common(p)
 
     p = sub.add_parser("synth-week", help="синтетическая неделя зала (S5): параметры YAML -> журнал событий")
@@ -708,7 +712,52 @@ def cmd_service(args) -> int:
     return run(args)
 
 
+def _billiard_reel(args) -> int:
+    from datetime import datetime
+
+    import yaml
+
+    from qonaq.billiard.cli import run_video
+    from qonaq.billiard.synth import build
+    from qonaq.config import PROJECT_ROOT
+    from qonaq.events.store import EventStore
+    from qonaq.reconcile import Settings, local_tz, read_paid_csv, reconcile, telegram_text, video_sessions
+    from qonaq.render.reel import billiard_keys, build_billiard_reel
+
+    scen = PROJECT_ROOT / "configs" / "synth_billiard" / "demo_reel.yaml"
+    spec = yaml.safe_load(scen.read_text(encoding="utf-8"))
+    name = f"synth_{spec['name']}"
+    vdir = PROJECT_ROOT / "data" / "videos"
+    video, zones = vdir / f"{name}.mp4", vdir / f"{name}.yaml"
+    if args.rerun or not video.exists():
+        build(scen, vdir)
+    run = Path("runs") / name
+    if args.rerun or not (run / "demo.mp4").exists():
+        run_video(video, zones, run, demo=True)
+    tz = local_tz()
+    start = datetime(2026, 11, 14, 20, 0, tzinfo=tz).timestamp()
+    st = EventStore(run / "events.sqlite")
+    paid, _ = read_paid_csv(PROJECT_ROOT / "configs" / "synth_billiard" / "demo_reel_paid.csv",
+                            datetime(2026, 11, 14).date(), tz)
+    res = reconcile(video_sessions(st, "billiard", start), paid, Settings(profile="billiard"),
+                    [(start, start + spec["duration_s"])])
+    lean = [(ev["table"], float(ev["lean"][0]) + 3) for ev in spec["timeline"] if "lean" in ev]
+    keys = billiard_keys(st, lean, paid={"B1"}, names={"B1": "Стол 1", "B2": "Стол 2"})
+    st.close()
+    lines = [x.strip() for x in telegram_text(res, "", tz).splitlines()[1:]][:4]
+    out = Path(args.out if args.out != "runs/demo_reel.mp4" else "runs/demo_reel_billiard.mp4")
+    build_billiard_reel(run, out, keys, lines, scene_fps=float(spec["fps"]))
+    print(f"Демо-ролик бильярда: {out}")
+    return 0
+
+
 def cmd_demo_reel(args) -> int:
+    if getattr(args, "billiard", False):
+        return _billiard_reel(args)
+    if getattr(args, "schematic", False):
+        from qonaq.render.schematic import cmd_schematic_reel
+
+        return cmd_schematic_reel(args)
     from qonaq.config import PROJECT_ROOT
     from qonaq.render.reel import build_reel
     from qonaq.runner import process_file
