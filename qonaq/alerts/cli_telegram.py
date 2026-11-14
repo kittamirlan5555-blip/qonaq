@@ -99,7 +99,8 @@ def example_messages(site=None, wall: float | None = None) -> dict[str, Any]:
     }
     store.close()
     return {"alerts": alerts, "shift": shift, "daily": daily, "health": health,
-            "feedback_answer": "Записано: неверно. Спасибо!", "late_suffix": "Доставлено с опозданием: не было интернета."}
+            "feedback_answer": "Записано: неверно. Спасибо!",
+            "late_suffix": "Доставлено с опозданием: не было интернета."}
 
 
 def cmd_examples(args) -> int:
@@ -183,9 +184,9 @@ def cmd_test(args) -> int:
 
     site = _site(args.site)
     if args.fake:
-        from qonaq.alerts.fake_api import FakeTelegramServer
-
         import socket
+
+        from qonaq.alerts.fake_api import FakeTelegramServer
 
         with socket.socket() as so:  # свободный порт
             so.bind(("127.0.0.1", 0))
