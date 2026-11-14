@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -204,8 +205,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--models", default="models")
 
     from qonaq.alerts.cli_telegram import add_parser as add_telegram
+    from qonaq.setup.service import add_parser as add_service
+    from qonaq.setup.wizard import add_parser as add_setup
 
     add_telegram(sub)
+    add_setup(sub)
+    add_service(sub)
     return ap
 
 
@@ -221,6 +226,14 @@ def main(argv: list[str] | None = None) -> int:
             except (ValueError, OSError):
                 pass
     logging.getLogger("httpx").setLevel(logging.WARNING)  # не печатать каждый запрос к Telegram
+    log_file = os.environ.get("QONAQ_LOG_FILE")
+    if log_file:  # служба (S3): лог в файл с ротацией 10 МБ × 5
+        from logging.handlers import RotatingFileHandler
+
+        Path(log_file).parent.mkdir(parents=True, exist_ok=True)
+        fh = RotatingFileHandler(log_file, maxBytes=10 * 2**20, backupCount=5, encoding="utf-8")
+        fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s", "%Y-%m-%d %H:%M:%S"))
+        logging.getLogger().addHandler(fh)
     load_dotenv_if_any(Path.cwd())
     handler = HANDLERS[args.cmd]
     return int(handler(args) or 0)
@@ -632,7 +645,21 @@ def cmd_telegram(args) -> int:
     return run(args)
 
 
+def cmd_setup(args) -> int:
+    from qonaq.setup.wizard import run_setup
+
+    return run_setup(args)
+
+
+def cmd_service(args) -> int:
+    from qonaq.setup.service import run
+
+    return run(args)
+
+
 HANDLERS = {
+    "service": cmd_service,
+    "setup": cmd_setup,
     "telegram": cmd_telegram,
     "health": cmd_health,
     "calibrate": cmd_calibrate,

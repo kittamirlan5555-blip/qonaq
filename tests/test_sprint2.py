@@ -144,3 +144,124 @@ def test_shift_summary_text_is_plain_russian():
     assert "3 стола из 14" in shift
     for text in ex["alerts"].values():
         assert text.startswith("⚠ ") and "Стол " in text and len(text) < 120
+
+
+# ---------------------------------------------------------------- S3: setup и служба
+def test_rtsp_describe_digest_and_errors():
+    """Мини-RTSP-сервер с Digest: 401 без авторизации, 200 с верным паролем, 404 на чужом пути."""
+    import hashlib
+    import re
+    import socket
+
+    from qonaq.setup.rtsp import describe
+
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(5)
+    port = srv.getsockname()[1]
+    realm, nonce = "IP Camera", "abc123"
+
+    def handle(conn):
+        with conn:
+            while True:
+                data = conn.recv(4096).decode()
+                if not data:
+                    return
+                url = data.split()[1]
+                cseq = re.search(r"CSeq: (\d+)", data).group(1)
+                auth = re.search(r'response="([0-9a-f]+)"', data)
+                if not auth:
+                    conn.sendall(f'RTSP/1.0 401 Unauthorized\r\nCSeq: {cseq}\r\nWWW-Authenticate: Digest '
+                                 f'realm="{realm}", nonce="{nonce}"\r\n\r\n'.encode())
+                    continue
+                ha1 = hashlib.md5(f"admin:{realm}:s3cr3t".encode()).hexdigest()
+                ha2 = hashlib.md5(f"DESCRIBE:{url}".encode()).hexdigest()
+                good = hashlib.md5(f"{ha1}:{nonce}:{ha2}".encode()).hexdigest() == auth.group(1)
+                code = ("200 OK" if url.endswith("/Streaming/Channels/102") else "404 Not Found") if good else \
+                    "401 Unauthorized"
+                conn.sendall(f"RTSP/1.0 {code}\r\nCSeq: {cseq}\r\nServer: fake\r\n\r\n".encode())
+
+    def serve():
+        for _ in range(3):
+            c, _ = srv.accept()
+            handle(c)
+
+    t = threading.Thread(target=serve, daemon=True)
+    t.start()
+    base = f"rtsp://admin:{{}}@127.0.0.1:{port}"
+    assert describe(base.format("s3cr3t") + "/Streaming/Channels/102").status == 200
+    assert describe(base.format("wrong") + "/Streaming/Channels/102").status == 401
+    assert describe(base.format("s3cr3t") + "/Streaming/Channels/902").status == 404
+    srv.close()
+    assert describe("rtsp://a:b@127.0.0.1:1/x").status == 0
+
+
+def test_detect_vendor_stops_on_wrong_password():
+    from qonaq.setup import discover
+    from qonaq.setup.rtsp import RtspProbe
+
+    calls = []
+
+    def probe(url):
+        calls.append(url)
+        return RtspProbe(url, 401)
+
+    orig = discover.tcp_open
+    discover.tcp_open = lambda *a, **k: True
+    try:
+        res = discover.detect_vendor("10.0.0.5", "admin", "bad", probe=probe)
+        assert res.vendor is None and "пароль" in res.error and len(calls) == 2  # не больше двух неудачных входов
+
+        def probe_dahua(url):
+            return RtspProbe(url, 200 if "realmonitor" in url and "channel=1&" in url or
+                             ("realmonitor" in url and "channel=2&" in url) else 404)
+
+        res = discover.detect_vendor("10.0.0.5", "admin", "ok", probe=probe_dahua)
+        assert res.vendor == "dahua"
+        discover.scan_channels(res, "admin", "ok", probe=probe_dahua)
+        assert res.channels == [1, 2]
+    finally:
+        discover.tcp_open = orig
+
+
+def test_build_url_encodes_only_breaking_chars():
+    from qonaq.setup.discover import build_url
+
+    assert build_url("hikvision", "1.2.3.4", "admin", "Pa$$!", 3) == \
+        "rtsp://admin:Pa$$!@1.2.3.4:554/Streaming/Channels/302"
+    assert "p%40ss" in build_url("dahua", "1.2.3.4", "admin", "p@ss", 1)
+
+
+def test_onvif_probe_match_parsing():
+    from qonaq.setup.discover import parse_probe_match
+
+    xml = ('<s:Envelope><s:Body><d:ProbeMatches><d:ProbeMatch><d:Scopes>onvif://www.onvif.org/hardware/DS-7608NI '
+           'onvif://www.onvif.org/name/HIKVISION</d:Scopes><d:XAddrs>http://192.168.1.64/onvif/device_service '
+           'http://[fe80::1]/onvif/device_service</d:XAddrs></d:ProbeMatch></d:ProbeMatches></s:Body></s:Envelope>')
+    out = parse_probe_match(xml)
+    assert out[0]["ip"] == "192.168.1.64" and out[0]["hardware"] == "DS-7608NI" and out[0]["name"] == "HIKVISION"
+
+
+def test_update_env_keeps_other_lines(tmp_path):
+    from qonaq.setup.wizard import update_env
+
+    env = tmp_path / ".env"
+    env.write_text("TELEGRAM_BOT_TOKEN=x\nQONAQ_NVR_PASSWORD=old\n", encoding="utf-8")
+    update_env(env, {"QONAQ_NVR_PASSWORD": "new", "QONAQ_NVR_USER": "admin"})
+    assert env.read_text(encoding="utf-8").splitlines() == ["TELEGRAM_BOT_TOKEN=x", "QONAQ_NVR_PASSWORD=new",
+                                                            "QONAQ_NVR_USER=admin"]
+
+
+def test_service_files_are_generated():
+    from pathlib import Path
+
+    from qonaq.setup.service import service_name, systemd_unit, windows_wrapper
+
+    assert service_name("cafe_arman") == "qonaq-cafe-arman"
+    unit = systemd_unit("cafe", "configs/sites/cafe.yaml", "/opt/q/.venv/bin/python", Path("/opt/q"), False, "qonaq")
+    assert "Restart=always" in unit and "User=qonaq" in unit and "WantedBy=multi-user.target" in unit
+    assert "ExecStart=/opt/q/.venv/bin/python -m qonaq live --site configs/sites/cafe.yaml" in unit
+    user_unit = systemd_unit("cafe", "configs/sites/cafe.yaml", "/p", Path("/opt/q"), True, None)
+    assert "User=" not in user_unit and "WantedBy=default.target" in user_unit
+    cmd = windows_wrapper("cafe", "configs/sites/cafe.yaml", r"C:\Qonaq\.venv\Scripts\python.exe", Path("C:/Qonaq"))
+    assert ":loop" in cmd and "goto loop" in cmd and "timeout" not in cmd.split("ping")[1]
