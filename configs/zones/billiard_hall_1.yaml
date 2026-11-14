@@ -1,0 +1,8 @@
+# Пример: 2 бильярдных стола под углом (как в синтетике configs/synth_billiard/evening.yaml).
+# На объекте перерисовать: python -m qonaq zones edit --camera hall_1 — тип billiard_table, 4 угла СУКНА
+# (игровой поверхности, без бортов) по часовой стрелке от левого верхнего.
+camera_id: hall_1
+frame_size: [960, 540]
+zones:
+- {id: B1, type: billiard_table, name: Стол 1, polygon: [[207.2, 113.3], [430.7, 113.3], [425.6, 235.2], [178.9, 235.2]]}
+- {id: B2, type: billiard_table, name: Стол 2, polygon: [[515.2, 113.3], [738.7, 113.3], [765.6, 235.2], [518.9, 235.2]]}
