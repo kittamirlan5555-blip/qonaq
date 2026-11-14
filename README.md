@@ -101,6 +101,14 @@ python -m qonaq live --site configs/sites/demo_webcam.yaml
 python -m qonaq live --site configs/sites/demo_file_as_stream.yaml
 ```
 
+На этой записи веранды алертов не бывает (официант подходит к столам в каждом круге записи). Чтобы увидеть
+настоящий алерт в панели и в Telegram на боевых порогах — синтетика полного цикла как поток (после `demo-reel`;
+алерт «гости ждут официанта» примерно через 3 мин 20 с):
+
+```bash
+python -m qonaq live --site configs/sites/demo_reel_as_stream.yaml
+```
+
 ## Все команды
 
 | Команда | Что делает |

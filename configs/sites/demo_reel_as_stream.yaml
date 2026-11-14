@@ -1,0 +1,18 @@
+# Live с настоящими алертами без камеры: синтетическая запись полного цикла (сели → ждут 3+ мин → алерт →
+# официант → ушли → убрали) проигрывается «как поток» по кругу, пороги боевые.
+# Запись появляется после `python -m qonaq demo-reel` (нужны fetch_datasets.py и `qonaq data index`).
+# Алерт «гости ждут официанта» уходит в Telegram примерно через 3 мин 20 с после старта и дальше раз в ~8 мин.
+#   python -m qonaq live --site configs/sites/demo_reel_as_stream.yaml   →   http://127.0.0.1:8000
+site_id: demo_reel_stream
+name: Демо — синтетика как поток
+profile: restaurant
+process_fps: 2
+cameras:
+  - id: synth_demo_reel
+    name: Зал (синтетика)
+    source: data/videos/synth_demo_reel.mp4
+    zones: configs/zones/synth_demo_reel.yaml
+    realtime: true
+    loop: true
+thresholds:
+  preexisting_grace_s: 0

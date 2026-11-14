@@ -130,3 +130,13 @@ def test_demo_reel_without_datasets_explains_what_to_run(tmp_path, monkeypatch, 
     assert cmd_demo_reel(args) == 2
     out = capsys.readouterr().out
     assert "fetch_datasets.py" in out and "data index" in out
+
+
+def test_all_site_configs_load_and_reference_existing_zone_files():
+    from qonaq.config import PROJECT_ROOT, load_site
+
+    for p in sorted((PROJECT_ROOT / "configs" / "sites").glob("*.yaml")):
+        site = load_site(p)
+        for cam in site.cameras:
+            if cam.zones:
+                assert (PROJECT_ROOT / cam.zones).exists(), f"{p.name}: нет {cam.zones}"
