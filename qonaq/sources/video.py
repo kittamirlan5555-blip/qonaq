@@ -50,7 +50,7 @@ def parse_source(spec: str) -> tuple[str, str | int]:
     return "file", spec
 
 
-def backoff_delays(base: float = 1.0, factor: float = 2.0, max_delay: float = 30.0) -> Iterator[float]:
+def backoff_delays(base: float = 1.0, factor: float = 2.0, max_delay: float = 15.0) -> Iterator[float]:
     d = base
     while True:
         yield min(d, max_delay)

@@ -291,8 +291,22 @@ def cmd_live(args) -> int:
     print(f"Объект: {site.name} · камер: {len(site.cameras)} · журнал: {service.run_dir / 'events.sqlite'}")
     try:
         if args.no_web:
+            import signal
+
+            stop = {"v": False}
+
+            def _term(*_):  # служба/kill: штатная остановка с записью health.json, run.json и отчёта
+                stop["v"] = True
+
+            for sig in ("SIGTERM", "SIGINT", "SIGBREAK"):
+                if hasattr(signal, sig):
+                    try:
+                        signal.signal(getattr(signal, sig), _term)
+                    except (ValueError, OSError):
+                        pass
             t0 = time.time()
-            while not service.finished.is_set() and (not args.duration or time.time() - t0 < args.duration):
+            while not stop["v"] and not service.finished.is_set() and (
+                    not args.duration or time.time() - t0 < args.duration):
                 time.sleep(0.2)
         else:
             import threading

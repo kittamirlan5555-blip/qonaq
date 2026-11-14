@@ -1,6 +1,6 @@
 """Текст с кириллицей поверх кадра. cv2.putText кириллицу не умеет, поэтому рисуем через Pillow.
 
-Каждая строка рендерится один раз в RGBA-патч и кэшируется — на кадр уходит только альфа-смешивание.
+Каждая строка рендерится один раз в маску uint8 и кэшируется — на кадр уходит только альфа-смешивание.
 """
 from __future__ import annotations
 
@@ -51,24 +51,22 @@ def get_font(size: int, bold: bool = False):
     return ImageFont.truetype(path, size)
 
 
-@lru_cache(maxsize=4096)
-def _patch(text: str, size: int, color: tuple[int, int, int], bold: bool) -> np.ndarray:
-    """RGBA-патч текста; color — BGR (как в OpenCV)."""
+@lru_cache(maxsize=1024)
+def _alpha(text: str, size: int, bold: bool) -> np.ndarray:
+    """Маска текста uint8 (h, w). Кэш ограничен и по числу (1024), и по весу: uint8 вместо float32 RGBA —
+    в 16 раз меньше. Раньше в кэше лежали float32-патчи на 4096 строк: подписи с таймерами («ждут 03:12»)
+    все разные, и живой режим набирал до ~0,5 ГБ (S1, EVAL §14)."""
     font = get_font(size, bold)
     l, t, r, b = font.getbbox(text)
     w, h = max(1, r - l + 2), max(1, int(size * 1.3))
     img = Image.new("L", (w, h), 0)
     ImageDraw.Draw(img).text((1 - l, 0), text, fill=255, font=font)
-    alpha = np.asarray(img, dtype=np.float32) / 255.0
-    out = np.empty((h, w, 4), dtype=np.float32)
-    out[..., 0], out[..., 1], out[..., 2] = color
-    out[..., 3] = alpha
-    return out
+    return np.asarray(img, dtype=np.uint8)
 
 
 def text_size(text: str, size: int, bold: bool = False) -> tuple[int, int]:
-    p = _patch(text, size, (255, 255, 255), bold)
-    return p.shape[1], p.shape[0]
+    a = _alpha(text, size, bold)
+    return a.shape[1], a.shape[0]
 
 
 def put_text(img: np.ndarray, text: str, org: tuple[int, int], size: int = 18,
@@ -78,8 +76,8 @@ def put_text(img: np.ndarray, text: str, org: tuple[int, int], size: int = 18,
     """Рисует text; org — левый верхний угол (anchor='lt') или центр ('c'). Возвращает занятый bbox."""
     if not text:
         return (org[0], org[1], org[0], org[1])
-    patch = _patch(text, size, tuple(int(c) for c in color), bold)
-    h, w = patch.shape[:2]
+    mask = _alpha(text, size, bold)
+    h, w = mask.shape[:2]
     x, y = int(org[0]), int(org[1])
     if anchor == "c":
         x, y = x - w // 2, y - h // 2
@@ -96,8 +94,7 @@ def put_text(img: np.ndarray, text: str, org: tuple[int, int], size: int = 18,
     x2, y2 = min(W, x + w), min(H, y + h)
     if x2 <= x or y2 <= y:
         return (x, y, x, y)
-    sub = patch[: y2 - y, : x2 - x]
-    a = sub[..., 3:4]
+    a = mask[: y2 - y, : x2 - x, None].astype(np.float32) / 255.0
     roi = img[y:y2, x:x2].astype(np.float32)
-    img[y:y2, x:x2] = (roi * (1 - a) + sub[..., :3] * a).astype(np.uint8)
+    img[y:y2, x:x2] = (roi * (1 - a) + np.array(color, dtype=np.float32) * a).astype(np.uint8)
     return (x - pad, y - pad, x + w + pad, y + h + pad)
