@@ -507,3 +507,54 @@ def test_blind_gap_does_not_count_towards_no_waiter():
     tl.run(80, guests=G)
     assert tl.alerts() == ["no_waiter"]
     assert tl.of("alert")[0].payload["blind_s"] >= 119
+
+
+@pytest.mark.parametrize("warmup", [dict(), dict(unknown=(7, 8))])
+def test_reconnect_warmup_is_not_a_departure(warmup):
+    """S1 (нашёл повторный прогон RTSP): после обрыва 2 мин первые секунды трекер/роли «прогреваются» — людей
+    за столом нет или они ещё «неизвестные». Это не уход: сессия продолжается, без «ушли»/«сели заново»."""
+    m = machine()
+    tl = seated(Timeline(m)).run(30, guests=G).run(8, guests=G, staff=W).run(60, guests=G)
+    assert m.state == TableState.SERVED
+    tl.t += 140  # обрыв
+    tl.run(4, **warmup).run(120, guests=G)
+    assert m.state == TableState.SERVED
+    assert tl.types() == ["seated", "served"], tl.types()
+
+
+def test_reconnect_warmup_while_waiting_no_false_alert_no_resplit():
+    """То же в «ждут официанта»: ни новой посадки задним числом, ни алерта за время вслепую."""
+    m = machine()
+    tl = seated(Timeline(m)).run(20, guests=G)  # ждут ~40 с
+    tl.t += 140
+    tl.run(3).run(m.al.no_waiter_s - 60, guests=G)
+    assert tl.types() == ["seated"], tl.types()
+    assert "no_waiter" not in tl.alerts()
+    tl.run(70, guests=G)
+    assert tl.alerts() == ["no_waiter"]
+
+
+def test_presence_filter_gap_is_frozen():
+    """Время вслепую не идёт ни в длительность присутствия, ни в длительность отсутствия."""
+    f = PresenceFilter(5.0, 0.7, 0.2)
+    t = 0.0
+    while t < 10:
+        f.update(t, True)
+        t += 0.2
+    since = f.since
+    f.on_gap(t - 0.2, t + 140)
+    t += 140
+    resume = t
+    f.update(t, False)  # первый кадр после обрыва — пусто: окно до обрыва держит присутствие
+    assert f.state
+    while t < resume + 6:
+        t += 0.2
+        f.update(t, False)
+    assert not f.state and f.since >= resume - 0.5  # отсутствие считается с возвращения картинки
+    f2 = PresenceFilter(5.0, 0.7, 0.2)
+    for i in range(50):
+        f2.update(i * 0.2, True)
+    f2.on_gap(9.8, 150)
+    for i in range(10):
+        f2.update(150 + i * 0.2, True)
+    assert f2.state and f2.duration(152) == pytest.approx(152 - since - 140.2, abs=0.5)

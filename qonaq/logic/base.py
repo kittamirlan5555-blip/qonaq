@@ -96,6 +96,24 @@ class PresenceFilter:
     def duration(self, ts: float) -> float:
         return ts - self.since if self.since is not None else 0.0
 
+    def on_gap(self, a: float, b: float) -> None:
+        """Наблюдений не было с a по b (обрыв камеры): «замораживаем» время — все отметки сдвигаются на b − a.
+
+        Без этого первый пустой кадр после обрыва (трекер и роли ещё не прогрелись) выключал присутствие
+        задним числом от последнего кадра до обрыва — и 2 минуты вслепую превращались в «гости ушли».
+        Окно наблюдений тоже сдвигается: гистерезис продолжает работать на кадрах до обрыва.
+        """
+        d = b - a
+        if d <= 0:
+            return
+        self._obs = deque((t + d, p) for t, p in self._obs)
+        if self.since is not None:
+            self.since += d
+        if self._first_ts is not None:
+            self._first_ts += d
+        if self._last_positive is not None:
+            self._last_positive += d
+
 
 def fmt_mmss(seconds: float) -> str:
     seconds = max(0, int(seconds))
