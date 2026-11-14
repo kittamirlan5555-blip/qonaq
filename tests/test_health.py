@@ -213,3 +213,125 @@ def test_machine_alert_carries_confidence():
     assert b and not is_confident(b[0], 0.6)
     c = run(None, by_role_guests=False)  # сидят «неизвестные» (стол занят по присутствию)
     assert all(not is_confident(x, 0.6) for x in c)  # если алерт и есть — он не уходит в Telegram
+
+
+# ---------------------------------------------------------------- B1: «поток завис» против «никто не двигается»
+def _scene(seed=7):
+    rng = np.random.default_rng(seed)
+    img = np.full((360, 640, 3), 110, np.uint8)
+    for _ in range(12):  # «мебель» — неподвижные прямоугольники
+        x, y = int(rng.integers(0, 560)), int(rng.integers(0, 300))
+        img[y:y + 50, x:x + 70] = rng.integers(40, 200, 3)
+    return img
+
+
+def _sensor(img, sigma, seed):
+    n = np.random.default_rng(seed).normal(0, sigma, img.shape)
+    return np.clip(img + n, 0, 255).astype(np.uint8)
+
+
+def _osd(img, t):
+    import cv2
+    img = img.copy()
+    cv2.putText(img, f"23:{int(t) // 60:02d}:{int(t) % 60:02d}", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+    return img
+
+
+def test_still_live_scene_is_not_frozen():
+    """Пустой зал: в кадре ничего не движется, но шум матрицы (σ=1) есть → не тревога, а still_s."""
+    m = HealthMonitor(HealthConfig(frozen_s=120), clock=Clock())
+    base = _scene()
+    for t in range(0, 200, 2):
+        m.observe_frame("c1", float(t), _sensor(base, 1.0, t))
+    assert kinds(m) == []
+    assert m.status()["cameras"]["c1"]["still_s"] >= 190
+
+
+def test_frozen_stream_identical_frames():
+    m = HealthMonitor(HealthConfig(frozen_s=120), clock=Clock())
+    still = _sensor(_scene(), 2.0, 0)
+    for t in range(0, 130, 2):
+        m.observe_frame("c1", float(t), still)
+    iss = m.check()
+    assert [i.kind for i in iss] == ["frozen_frame"] and iss[0].data["osd"] is False
+    assert "поток завис" in iss[0].message
+
+
+def test_frozen_camera_with_ticking_osd_clock():
+    """Регистратор рисует часы поверх застывшей картинки: меняется 1–3 клетки из 144 → всё равно завис."""
+    m = HealthMonitor(HealthConfig(frozen_s=120), clock=Clock())
+    still = _sensor(_scene(), 2.0, 0)
+    for t in range(0, 130, 2):
+        m.observe_frame("c1", float(t), _osd(still, t))
+    iss = m.check()
+    assert [i.kind for i in iss] == ["frozen_frame"] and iss[0].data["osd"] is True
+    assert "время на картинке идёт" in iss[0].message
+
+
+def test_frozen_clears_when_noise_returns_and_motion_resets_still():
+    m = HealthMonitor(HealthConfig(frozen_s=60), clock=Clock())
+    base = _scene()
+    still = _sensor(base, 2.0, 0)
+    for t in range(0, 70, 2):
+        m.observe_frame("c1", float(t), still)
+    assert kinds(m) == ["frozen_frame"]
+    m.observe_frame("c1", 72.0, _sensor(base, 2.0, 72))
+    assert kinds(m) == []
+    moved = base.copy()
+    moved[100:250, 200:300] = 30  # человек вошёл
+    m.observe_frame("c1", 74.0, _sensor(moved, 2.0, 74))
+    assert m.status()["cameras"]["c1"]["still_s"] == 0.0
+
+
+def test_live_cells_fraction_basic():
+    from qonaq.health.monitor import live_cells_fraction
+    a = np.full((90, 160), 100, np.uint8)
+    assert live_cells_fraction(a, a) == 0.0
+    b = a.copy()
+    b[:10, :10] = 120  # одна клетка
+    assert 0 < live_cells_fraction(b, a) <= 2 / 144
+    c = _sensor(a[..., None].repeat(3, 2), 1.0, 1)[..., 0]
+    assert live_cells_fraction(c, a) > 0.9
+
+
+def _encode_and_watch(tmp_path, name, frame_fn, seconds=130, fps=2.0):
+    """Кадры → H.264 (как пишет VideoSink/регистратор) → декодирование → монитор."""
+    import cv2
+
+    from qonaq.render.sink import VideoSink
+    p = tmp_path / f"{name}.mp4"
+    sink = VideoSink(p, fps, crf=28)
+    for k in range(int(seconds * fps)):
+        sink.write(frame_fn(k))
+    sink.close()
+    m = HealthMonitor(HealthConfig(frozen_s=90), clock=Clock())
+    cap = cv2.VideoCapture(str(p))
+    k = 0
+    while True:
+        ok, f = cap.read()
+        if not ok:
+            break
+        m.observe_frame("c1", k / fps, f)
+        k += 1
+    assert k > 0.9 * seconds * fps
+    return m
+
+
+def test_frozen_vs_still_through_h264(tmp_path):
+    """Сквозь кодек: шум матрицы в P-кадрах почти съедается, но I-кадры живой камеры каждый раз новые,
+    а зависшая картинка, пережатая кодеком, повторяется с периодом GOP."""
+    from qonaq.synth.render import add_sensor_noise
+    base = cv2_resize(_scene(), (320, 180))
+    rng = np.random.default_rng(0)
+    live = _encode_and_watch(tmp_path, "live", lambda k: add_sensor_noise(base, 1.5, rng))
+    assert kinds(live) == [] and live.status()["cameras"]["c1"]["still_s"] > 100
+    frozen = _encode_and_watch(tmp_path, "frozen", lambda k: base)
+    assert kinds(frozen) == ["frozen_frame"]
+    frozen_osd = _encode_and_watch(tmp_path, "osd", lambda k: _osd(base, k / 2))
+    iss = frozen_osd.check()
+    assert [i.kind for i in iss] == ["frozen_frame"] and iss[0].data["osd"] is True
+
+
+def cv2_resize(img, size):
+    import cv2
+    return cv2.resize(img, size, interpolation=cv2.INTER_AREA)

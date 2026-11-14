@@ -53,6 +53,9 @@ class Scenario(BaseModel):
     guest_venues: list[str] = Field(default_factory=lambda: ["C", "B"])
     zones: list[ZoneDef]
     actors: list[Actor]
+    # B1: шум матрицы, σ уровней яркости. Без него неподвижная синтетика — побитово одинаковые кадры, то есть
+    # «зависший поток» для монитора здоровья. Реальная камера всегда шумит. Ролики до SPRINT3 — без шума (0).
+    sensor_noise: float = 1.5
     dishes: bool = True  # после ухода гостей на стол «ставится посуда» до уборки
     alerts_forbidden: list[str] = Field(default_factory=list)
     alerts_expected: list[str] = Field(default_factory=list)

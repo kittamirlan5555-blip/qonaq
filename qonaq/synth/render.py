@@ -158,6 +158,14 @@ def background(sc: Scenario, root: Path) -> np.ndarray:
     return np.median(np.stack(frames), axis=0).astype(np.uint8)
 
 
+def add_sensor_noise(img: np.ndarray, sigma: float, rng: np.random.Generator) -> np.ndarray:
+    """Шум матрицы, как у настоящей камеры (σ уровней яркости, независимо по кадрам)."""
+    if sigma <= 0:
+        return img
+    noise = rng.normal(0.0, sigma, img.shape).astype(np.float32)
+    return np.clip(img.astype(np.float32) + noise, 0, 255).astype(np.uint8)
+
+
 def render(sc: Scenario, out_video: Path, root: Path, bank: SpriteBank) -> int:
     from qonaq.render.sink import VideoSink
 
@@ -166,6 +174,7 @@ def render(sc: Scenario, out_video: Path, root: Path, bank: SpriteBank) -> int:
     n = int(sc.duration_s * sc.fps)
     out_video.parent.mkdir(parents=True, exist_ok=True)
     sink = VideoSink(out_video, sc.fps, crf=18)
+    noise_rng = np.random.default_rng(12345)
     try:
         for i in range(n):
             t = i / sc.fps
@@ -184,7 +193,7 @@ def render(sc: Scenario, out_video: Path, root: Path, bank: SpriteBank) -> int:
                 crop, alpha = bank.person(a.kind, venues, a.sprite, pose)
                 k = 1.0 + sc.scale_k * (y - sc.scale_ref_y) if sc.scale_ref_y is not None else 1.0
                 paste(img, crop, alpha, x, y, (sc.sit_h if pose == "sit" else sc.stand_h) * k)
-            sink.write(img)
+            sink.write(add_sensor_noise(img, sc.sensor_noise, noise_rng))
     finally:
         sink.close()
     return n
