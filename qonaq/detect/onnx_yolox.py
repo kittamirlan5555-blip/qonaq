@@ -11,6 +11,7 @@ YOLOX (Megvii) распространяется под Apache-2.0, готовы�
 from __future__ import annotations
 
 import logging
+import math
 import urllib.request
 from collections.abc import Sequence
 from pathlib import Path
@@ -143,18 +144,22 @@ class OnnxYoloxDetector:
                     ) -> list[Detection]:
         h, w = frame.shape[:2]
         parts = [self._infer(frame)]
-        for x0, y0, x1, y1 in tile_boxes(w, h, self.tiles, roi):
+        tiles = tile_boxes(w, h, self.tiles, roi)
+        if tiles:  # внешняя граница области плиток: рамки у неё не выбрасываем (там нет соседней плитки)
+            ex0, ey0 = min(t[0] for t in tiles), min(t[1] for t in tiles)
+            ex1, ey1 = max(t[2] for t in tiles), max(t[3] for t in tiles)
+        for x0, y0, x1, y1 in tiles:
             b, s, c = self._infer(frame[y0:y1, x0:x1])
             if len(b):
                 # рамки, упирающиеся во внутренний край плитки, обрезаны — их увидит соседняя плитка/полный кадр
                 cut = np.zeros(len(b), bool)
-                if x0 > 0:
+                if x0 > ex0:
                     cut |= b[:, 0] <= 2
-                if x1 < w:
+                if x1 < ex1:
                     cut |= b[:, 2] >= (x1 - x0) - 2
-                if y0 > 0:
+                if y0 > ey0:
                     cut |= b[:, 1] <= 2
-                if y1 < h:
+                if y1 < ey1:
                     cut |= b[:, 3] >= (y1 - y0) - 2
                 b, s, c = b[~cut], s[~cut], c[~cut]
                 b = b + np.array([x0, y0, x0, y0], dtype=np.float32)
@@ -194,8 +199,12 @@ def tile_boxes(w: int, h: int, tiles: int, roi: tuple[float, float, float, float
             return []
         tw = min(w, max(h, int(w * 0.6)))
         return [(0, 0, tw, h), (w - tw, 0, w, h)]
-    cols = tiles
-    rows = max(1, int(round(tiles * rh / max(rw, 1))))
+    if roi is None:
+        cols = tiles
+        rows = max(1, int(round(tiles * rh / max(rw, 1))))
+    else:  # область зон: ~tiles плиток, раскладка по её пропорции (квадратная область, 2 -> 1×2, 4 -> 2×2)
+        cols = max(1, int(round(math.sqrt(tiles * rw / max(rh, 1)))))
+        rows = max(1, math.ceil(tiles / cols))
     tw = int(rw / (cols - (cols - 1) * overlap)) if cols > 1 else rw
     th = int(rh / (rows - (rows - 1) * overlap)) if rows > 1 else rh
     out = []

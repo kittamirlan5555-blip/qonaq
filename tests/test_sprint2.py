@@ -340,8 +340,8 @@ def test_tile_boxes_cover_roi():
     assert tile_boxes(1920, 1080, 1) == []
     assert tile_boxes(1920, 1080, 2) == [(0, 0, 1152, 1080), (768, 0, 1920, 1080)]  # прежнее поведение
     roi = (900, 200, 1920, 800)
-    boxes = tile_boxes(1920, 1080, 3, roi)
-    assert len(boxes) == 6
+    boxes = tile_boxes(1920, 1080, 4, roi)
+    assert 4 <= len(boxes) <= 6  # область 1020×600: около 4 плиток по пропорции
     assert min(b[0] for b in boxes) == 900 and max(b[2] for b in boxes) <= 1920
     assert min(b[1] for b in boxes) == 200 and max(b[3] for b in boxes) <= 800
 

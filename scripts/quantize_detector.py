@@ -76,7 +76,7 @@ def main(argv=None) -> int:
             return next(self.it, None)
 
     pre = src.with_name(f"{src.stem}_pre.onnx")
-    quant_pre_process(str(src), str(pre))
+    quant_pre_process(str(src), str(pre), skip_symbolic_shape=True)
     # не квантуем хвост: декодирование рамок чувствительно к точности
     nodes = onnx.load(str(pre)).graph.node
     tail = [n.name for n in nodes[-12:]]

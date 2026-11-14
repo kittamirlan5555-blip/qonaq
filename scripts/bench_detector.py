@@ -80,6 +80,20 @@ def roi_of(gt: dict) -> tuple[float, float, float, float] | None:
     return max(0.0, min(xs) - mx), max(0.0, min(ys) - my), min(1920.0, max(xs) + mx), min(1080.0, max(ys) + my)
 
 
+_ZONES = None
+
+
+def in_zones(x: float, y: float) -> bool:
+    """Центр рамки внутри одной из зон столов камеры — «человек за столом» (то, что важно продукту)."""
+    global _ZONES
+    if _ZONES is None:
+        from qonaq.zones.models import load_zones
+
+        zs = load_zones(ROOT / "configs" / "zones" / "cctv_restaurant_corner.yaml").scaled(1920, 1080)
+        _ZONES = [np.array(z.polygon, np.float32) for z in zs.zones if z.type == "table"]
+    return any(cv2.pointPolygonTest(p, (float(x), float(y)), False) >= 0 for p in _ZONES)
+
+
 def model_path(name: str, int8: bool) -> str:
     if not int8:
         return name
@@ -118,6 +132,7 @@ def main(argv=None) -> int:
             roi = tuple(v * k for v in base_roi) if use_roi else None
             tp5 = tp3 = fp5 = 0
             small_tp = small_n = 0
+            zone_tp = zone_n = 0
             times = []
             first = True
             for f in gt["frames"]:
@@ -134,25 +149,29 @@ def main(argv=None) -> int:
                 a, b = match(f["boxes"], pred, 0.5)
                 tp5, fp5 = tp5 + a, fp5 + b
                 tp3 += match(f["boxes"], pred, 0.3)[0]
+                inz = [g for g in f["boxes"] if in_zones((g[0] + g[2]) / 2, (g[1] + g[3]) / 2)]
+                zone_n += len(inz)
+                zone_tp += match(inz, pred, 0.3)[0]
                 small = [g for g in f["boxes"] if (g[3] - g[1]) < 160]  # дальние/мелкие (< 15% высоты кадра)
                 small_n += len(small)
                 small_tp += match(small, pred, 0.3)[0]
             ms = 1000 * float(np.median(times))
             row = {"variant": var, "res": res, "recall50": tp5 / n_gt, "recall30": tp3 / n_gt,
                    "precision50": tp5 / max(1, tp5 + fp5), "small_recall30": small_tp / max(1, small_n),
+                   "zone_recall30": zone_tp / max(1, zone_n), "zone_n": zone_n,
                    "ms": ms, "fps_1core_equiv": None}
             rows.append(row)
             print(f"{var:22s} {res:5d}px  recall@.5 {row['recall50']:.2f}  @.3 {row['recall30']:.2f}  "
-                  f"мелкие@.3 {row['small_recall30']:.2f}  precision@.5 {row['precision50']:.2f}  {ms:6.0f} мс/кадр",
-                  flush=True)
+                  f"мелкие@.3 {row['small_recall30']:.2f}  за столами@.3 {row['zone_recall30']:.2f}  "
+                  f"precision@.5 {row['precision50']:.2f}  {ms:6.0f} мс/кадр", flush=True)
     lines = [f"Кадров: {len(gt['frames'])}, людей в разметке: {n_gt} (мелких < 160 px: "
              f"{sum(1 for f in gt['frames'] for g in f['boxes'] if g[3] - g[1] < 160)}); conf {args.conf}.", "",
-             "| вариант | вход | recall IoU≥0,5 | recall IoU≥0,3 | мелкие, recall IoU≥0,3 | precision IoU≥0,5 "
-             "| мс/кадр |",
-             "|---|---|---|---|---|---|---|"]
+             "| вариант | вход | recall IoU≥0,5 | recall IoU≥0,3 | мелкие, IoU≥0,3 | за столами, IoU≥0,3 | "
+             "precision IoU≥0,5 | мс/кадр |",
+             "|---|---|---|---|---|---|---|---|"]
     for r in rows:
         lines.append(f"| `{r['variant']}` | {r['res']} | {r['recall50']:.2f} | {r['recall30']:.2f} | "
-                     f"{r['small_recall30']:.2f} | {r['precision50']:.2f} | {r['ms']:.0f} |")
+                     f"{r['small_recall30']:.2f} | {r['zone_recall30']:.2f} | {r['precision50']:.2f} | {r['ms']:.0f} |")
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
