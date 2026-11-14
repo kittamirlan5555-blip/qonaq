@@ -27,7 +27,8 @@ from qonaq.detect.onnx_yolox import OnnxYoloxDetector  # noqa: E402
 GT = ROOT / "tests" / "fixtures" / "gt" / "people_cctv_restaurant_corner.json"
 VIDEO = ROOT / "data" / "videos" / "cctv_restaurant_corner.mp4"
 DEFAULT = ["yolox_tiny:1", "yolox_s:1", "yolox_s:2", "yolox_s:3", "yolox_s:2:roi", "yolox_s:3:roi",
-           "yolox_m:1", "yolox_m:2", "yolox_m:2:roi", "yolox_m:3:roi", "yolox_s:1:int8", "yolox_s:2:roi:int8"]
+           "yolox_m:1", "yolox_m:2", "yolox_m:2:roi", "yolox_m:3:roi", "yolox_s:1:int8", "yolox_s:2:roi:int8",
+           "nanodet-plus-m-1.5x_416:1", "nanodet-plus-m-1.5x_416:3:roi"]
 
 
 def iou(a, b) -> float:
@@ -105,8 +106,13 @@ def main(argv=None) -> int:
         parts = var.split(":")
         name, tiles = parts[0], int(parts[1]) if len(parts) > 1 else 1
         use_roi, int8 = "roi" in parts, "int8" in parts
-        det = OnnxYoloxDetector(model_path(name, int8), conf=args.conf, tiles=tiles,
-                                threads=args.threads or None)
+        if name.startswith("nanodet"):
+            from qonaq.detect.onnx_nanodet import OnnxNanoDetDetector
+
+            det = OnnxNanoDetDetector(name, conf=args.conf, tiles=tiles, threads=args.threads or None)
+        else:
+            det = OnnxYoloxDetector(model_path(name, int8), conf=args.conf, tiles=tiles,
+                                    threads=args.threads or None)
         for res in args.res:
             k = res / 1920
             roi = tuple(v * k for v in base_roi) if use_roi else None
