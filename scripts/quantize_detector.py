@@ -75,8 +75,17 @@ def main(argv=None) -> int:
         def get_next(self):
             return next(self.it, None)
 
+    # веса YOLOX экспортированы в opset 11, а покальная (per-channel) квантизация требует opset ≥ 13
+    from onnx import version_converter
+
+    up = src.with_name(f"{src.stem}_op13.onnx")
+    if model.opset_import[0].version < 13:
+        onnx.save(version_converter.convert_version(model, 13), str(up))
+    else:
+        onnx.save(model, str(up))
     pre = src.with_name(f"{src.stem}_pre.onnx")
-    quant_pre_process(str(src), str(pre), skip_symbolic_shape=True)
+    quant_pre_process(str(up), str(pre), skip_symbolic_shape=True)
+    up.unlink(missing_ok=True)
     # не квантуем хвост: декодирование рамок чувствительно к точности
     nodes = onnx.load(str(pre)).graph.node
     tail = [n.name for n in nodes[-12:]]

@@ -1,0 +1,13 @@
+# Профиль детектора «GPU (RTX 2060 и т.п.), до 8 камер» (S2, EVAL §15). Скопируйте блоки в YAML объекта.
+# pip uninstall onnxruntime && pip install onnxruntime-gpu   (Windows без CUDA: onnxruntime-directml)
+# Скорость на GPU в облаке не измерялась — замерьте на месте: python scripts/bench_detector.py --variants yolox_m:2:roi
+site_id: profile_gpu
+name: Профиль GPU
+process_fps: 2
+detector:
+  backend: onnx
+  onnx_model: yolox_m
+  onnx_tiles: 2
+  roi_tiles: true
+  detect_every: 1
+  device: auto

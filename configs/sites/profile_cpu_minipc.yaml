@@ -1,0 +1,13 @@
+# Профиль детектора «CPU мини-ПК, 2–4 камеры» (S2, EVAL §15). Скопируйте блоки detector/process_fps в YAML объекта.
+# yolox_m в INT8 (python scripts/quantize_detector.py yolox_m) + две плитки только вокруг зон столов,
+# детектор через кадр (между ними — последние рамки; трекер и логика идут каждый кадр).
+# Без INT8-файла: onnx_model: yolox_s (хуже на тёмных углах, EVAL §15) — работает «из коробки».
+site_id: profile_cpu_minipc
+name: Профиль CPU мини-ПК
+process_fps: 2
+detector:
+  backend: onnx
+  onnx_model: data/weights/yolox_m_int8.onnx
+  onnx_tiles: 2
+  roi_tiles: true
+  detect_every: 2
