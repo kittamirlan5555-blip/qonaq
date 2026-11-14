@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     preexisting INTEGER NOT NULL DEFAULT 0,
     dirty_seat INTEGER NOT NULL DEFAULT 0,
     low_confidence INTEGER NOT NULL DEFAULT 0,
-    UNIQUE(camera_id, zone_id, sid, kind)
+    UNIQUE(camera_id, zone_id, sid, kind, seated_ts)
 );
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS alerts_sent (
@@ -78,10 +78,24 @@ class EventStore:
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._db = sqlite3.connect(self.path, check_same_thread=False)
         self._db.row_factory = sqlite3.Row
+        self._migrate_sessions()
         self._db.executescript(SCHEMA)
         self._lock = threading.Lock()
         self._open: dict[tuple[str, str, str], dict[str, Any]] = {}  # незакрытые сессии
         self._dirty_next: set[tuple[str, str, str]] = set()  # следующая посадка — за неубранный стол
+
+    def _migrate_sessions(self) -> None:
+        """Старые журналы: сессия была уникальна по (камера, стол, sid). После перезапуска службы sid начинаются
+        заново и новые посадки затирали старые (S5). Теперь в ключе ещё и seated_ts; таблица пересобирается."""
+        row = self._db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='sessions'").fetchone()
+        if row is None or "kind, seated_ts)" in row[0]:
+            return
+        with self._db:
+            self._db.execute("ALTER TABLE sessions RENAME TO sessions_old")
+            self._db.executescript(SCHEMA)
+            cols = ",".join(SESSION_COLS)
+            self._db.execute(f"INSERT OR IGNORE INTO sessions({cols}) SELECT {cols} FROM sessions_old")
+            self._db.execute("DROP TABLE sessions_old")
 
     # ------------------------------------------------------------------ meta
     def set_meta(self, **kv: Any) -> None:

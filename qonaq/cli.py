@@ -76,9 +76,21 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common(p)
 
     p = sub.add_parser("report", help="отчёт смены из журнала событий: report.html / report.md / telegram.txt")
-    p.add_argument("run_dir", help="папка прогона (runs/<имя>/)")
+    p.add_argument("run_dir", help="папка прогона (runs/<имя>/) или слово pilot — отчёт пилота «как есть / стало»")
     p.add_argument("--site", help="YAML объекта (средний чек, пороги)")
     p.add_argument("--avg-check", type=float, help="средний чек на стол, ₸ (переопределяет конфиг)")
+    p.add_argument("--baseline", nargs="+", help="pilot: журналы «как есть» (папки прогонов / events.sqlite)")
+    p.add_argument("--baseline-from", help="pilot: начало периода «как есть», ГГГГ-ММ-ДД[ ЧЧ:ММ]")
+    p.add_argument("--baseline-to", help="pilot: конец периода «как есть» (дата включительно)")
+    p.add_argument("--after", nargs="+", help="pilot: журналы «стало»")
+    p.add_argument("--after-from", help="pilot: начало периода «стало»")
+    p.add_argument("--after-to", help="pilot: конец периода «стало»")
+    p.add_argument("--out", help="pilot: куда сохранить HTML (по умолчанию runs/pilot_report.html)")
+
+    p = sub.add_parser("synth-week", help="синтетическая неделя зала (S5): параметры YAML -> журнал событий")
+    p.add_argument("params", nargs="+", help="configs/synth/week_*.yaml")
+    p.add_argument("--out", default="runs/pilot_synth", help="папка; журнал каждой недели — <out>/<name>/")
+    p.add_argument("--site", help="YAML объекта (пороги)")
 
     p = sub.add_parser("live", help="поток (вебкамера/RTSP/файл как поток) + веб-панель + алерты")
     p.add_argument("--site", required=True, help="YAML объекта, напр. configs/sites/demo_webcam.yaml")
@@ -271,6 +283,16 @@ def cmd_report(args) -> int:
     site = _site(args)
     if args.avg_check:
         site.business.avg_check_kzt = args.avg_check
+    if args.run_dir == "pilot":
+        from qonaq.metrics.pilot import generate_pilot_report, summary_lines
+
+        if not args.baseline:
+            raise SystemExit("нужно --baseline <журналы> (и обычно --after <журналы>)")
+        out, a, b = generate_pilot_report(site, args.baseline, args.after, args.out or "runs/pilot_report.html",
+                                          args.baseline_from, args.baseline_to, args.after_from, args.after_to)
+        print("\n".join(summary_lines(a, b, site)))
+        print(f"\nОтчёт пилота: {out}")
+        return 0
     out = generate_report(args.run_dir, site)
     print(out["telegram"].read_text(encoding="utf-8"))
     print(f"\nОтчёт: {out['html']}\n       {out['md']}\n       {out['telegram']}")
@@ -671,7 +693,22 @@ def cmd_service(args) -> int:
     return run(args)
 
 
+def cmd_synth_week(args) -> int:
+    from qonaq.synth.week import WeekParams, simulate
+
+    site = _site(args)
+    for path in args.params:
+        p = WeekParams.load(path)
+        out = Path(args.out) / p.name
+        st = simulate(p, site, out)
+        n = len(st.sessions())
+        st.close()
+        print(f"{p.name}: {p.days} дн., {p.tables} столов, посадок {n} -> {out / 'events.sqlite'}")
+    return 0
+
+
 HANDLERS = {
+    "synth-week": cmd_synth_week,
     "service": cmd_service,
     "setup": cmd_setup,
     "telegram": cmd_telegram,

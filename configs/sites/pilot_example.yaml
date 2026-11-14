@@ -1,0 +1,11 @@
+# Для примера отчёта пилота на синтетике (S5):
+#   python -m qonaq synth-week configs/synth/week_baseline.yaml configs/synth/week_after.yaml
+#   python -m qonaq report pilot --site configs/sites/pilot_example.yaml --baseline runs/pilot_synth/week_baseline \
+#       --after runs/pilot_synth/week_after --out docs/examples/pilot_report_example.html
+site_id: pilot_example
+name: Кафе «Пример» (синтетика)
+profile: restaurant
+business:
+  avg_check_kzt: 15000
+  open_hours: "11:00-23:00"
+  timezone: Asia/Almaty

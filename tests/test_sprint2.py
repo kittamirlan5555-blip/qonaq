@@ -265,3 +265,69 @@ def test_service_files_are_generated():
     assert "User=" not in user_unit and "WantedBy=default.target" in user_unit
     cmd = windows_wrapper("cafe", "configs/sites/cafe.yaml", r"C:\Qonaq\.venv\Scripts\python.exe", Path("C:/Qonaq"))
     assert ":loop" in cmd and "goto loop" in cmd and "timeout" not in cmd.split("ping")[1]
+
+
+# ---------------------------------------------------------------- S5: журнал, периоды, отчёт пилота
+def test_sessions_survive_restart_with_same_sid(tmp_path):
+    """После перезапуска службы sid начинаются заново — старые сессии не должны затираться."""
+    import sqlite3
+
+    from qonaq.events.store import EventStore
+    from qonaq.logic.base import Event
+
+    db = tmp_path / "events.sqlite"
+    s = EventStore(db)
+    s.add([Event(100.0, "T01", "seated", {"sid": 1}, "c"), Event(200.0, "T01", "left", {"sid": 1}, "c")])
+    s.close()
+    s = EventStore(db)  # «перезапуск»
+    s.add([Event(5000.0, "T01", "seated", {"sid": 1}, "c")])
+    assert len(s.sessions()) == 2
+    s.close()
+    # миграция журнала со старой схемой (UNIQUE без seated_ts)
+    old = tmp_path / "old.sqlite"
+    c = sqlite3.connect(old)
+    c.execute("CREATE TABLE sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, camera_id TEXT NOT NULL, zone_id TEXT "
+              "NOT NULL, sid INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT 'table', seated_ts REAL NOT NULL, served_ts "
+              "REAL, left_ts REAL, cleaned_ts REAL, response_time_s REAL, visit_duration_s REAL, cleanup_time_s REAL, "
+              "staff_visits INTEGER NOT NULL DEFAULT 0, guests INTEGER, outcome TEXT NOT NULL DEFAULT 'open', "
+              "preexisting INTEGER NOT NULL DEFAULT 0, dirty_seat INTEGER NOT NULL DEFAULT 0, low_confidence INTEGER "
+              "NOT NULL DEFAULT 0, UNIQUE(camera_id, zone_id, sid, kind))")
+    c.execute("INSERT INTO sessions(camera_id, zone_id, sid, seated_ts) VALUES ('c', 'T01', 1, 10.0)")
+    c.commit()
+    c.close()
+    s = EventStore(old)
+    s.add([Event(900.0, "T01", "seated", {"sid": 1}, "c")])
+    assert len(s.sessions()) == 2
+    s.close()
+
+
+def test_slice_and_merge_periods():
+    from qonaq.events.store import EventStore
+    from qonaq.logic.base import Event
+    from qonaq.metrics.period import slice_store
+
+    s = EventStore(":memory:")
+    s.add([Event(t, "T01", typ, {"sid": i, "response_time_s": 60.0}, "c") for i, t0 in enumerate((1000, 90000))
+           for t, typ in ((t0, "seated"), (t0 + 60, "served"))])
+    s.set_meta(time_base="epoch", tables=1)
+    day2 = slice_store(s, 86400, 2 * 86400)
+    assert [x["seated_ts"] for x in day2.sessions()] == [90000]
+    assert day2.meta()["t_start"] == 86400
+
+
+def test_synth_week_and_pilot_report(tmp_path):
+    from qonaq.config import SiteConfig
+    from qonaq.metrics.pilot import generate_pilot_report
+    from qonaq.synth.week import WeekParams, simulate
+
+    site = SiteConfig(name="Тестовое кафе")
+    simulate(WeekParams(name="b", days=2, seed=1, response_median_s=200, cleanup_median_s=300), site,
+             tmp_path / "b").close()
+    simulate(WeekParams(name="a", days=2, seed=2, start="2026-11-09", response_median_s=90, cleanup_median_s=100),
+             site, tmp_path / "a").close()
+    out, A, B = generate_pilot_report(site, [str(tmp_path / "b")], [str(tmp_path / "a")], tmp_path / "r.html")
+    assert A["days"] == 2 and B["days"] == 2
+    assert A["seatings_day"] > 30  # сессии не затёрлись между днями
+    assert B["median"] < A["median"]
+    text = out.read_text(encoding="utf-8")
+    assert "СИНТЕТИЧЕСКИХ" in text and "Как было и как стало" in text and "<svg" in text and "медиан" in text

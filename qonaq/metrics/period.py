@@ -56,6 +56,8 @@ def merge_runs(run_dirs: Iterable[str | Path], gap_s: float = 0.0) -> EventStore
     time_base = None
     t_first: float | None = None
     t_last = 0.0
+    runs = 0
+    extra: dict = {}
     for d in run_dirs:
         p = Path(d)
         db = p if p.suffix == ".sqlite" else p / "events.sqlite"
@@ -68,11 +70,14 @@ def merge_runs(run_dirs: Iterable[str | Path], gap_s: float = 0.0) -> EventStore
             off = 0.0 if tb == "epoch" else offset - t0
             _replay(dst, src.events(), off)
             tables = max(tables, int(meta.get("tables") or 0))
+            runs += 1
+            extra.update({k: meta[k] for k in ("synthetic", "synthetic_name", "utc_offset_h", "site_id", "profile")
+                          if k in meta})
             t_first = t0 + off if t_first is None else min(t_first, t0 + off)
             t_last = max(t_last, t1 + off)
             offset = t_last + gap_s
         finally:
             src.close()
     dst.set_meta(time_base=time_base or "video", tables=tables, t_start=t_first or 0.0, t_end=t_last,
-                 scene_s=t_last - (t_first or 0.0))
+                 scene_s=t_last - (t_first or 0.0), runs=runs, **extra)
     return dst
