@@ -101,13 +101,11 @@ def clock(wall: float, tz: str | None = None) -> str:
     import time
     from datetime import datetime
 
-    try:
-        from zoneinfo import ZoneInfo
+    from qonaq.config import business_tz
 
-        return datetime.fromtimestamp(wall, ZoneInfo(tz)).strftime("%H:%M") if tz else time.strftime(
-            "%H:%M", time.localtime(wall))
-    except Exception:  # noqa: BLE001
+    if not tz:
         return time.strftime("%H:%M", time.localtime(wall))
+    return datetime.fromtimestamp(wall, business_tz(tz)).strftime("%H:%M")
 
 
 def alert_message(kind: str, zone_title: str, seconds: float, wall: float | None = None,

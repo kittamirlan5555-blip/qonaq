@@ -58,8 +58,10 @@ class LiveService:
         self.sampler = FrameSampler(site.health.sample_every_s)
         self.owner = sender_from_env(site.health.owner_chat_env) if use_env_sender else None
         self._issue_sent: dict[tuple, float] = {}
-        self._daily_day: str | None = None
-        self._shift_day: str | None = None
+        # B8: день последней отправки — в журнале, иначе после перезапуска службы сводки уходили повторно
+        _m = self.store.meta()
+        self._daily_day: str | None = _m.get("daily_sent_day")
+        self._shift_day: str | None = _m.get("shift_sent_day")
         self.venue = sender_from_env(site.alerts.venue_chat_env) if use_env_sender else None
         self._health_thread: threading.Thread | None = None
         self._feedback = None
@@ -128,20 +130,14 @@ class LiveService:
     def _local_now(self):
         from datetime import datetime
 
-        try:
-            from zoneinfo import ZoneInfo
+        from qonaq.config import business_tz
 
-            return datetime.now(ZoneInfo(self.site.business.timezone)).timetuple()
-        except Exception:  # noqa: BLE001 — на Windows без пакета tzdata
-            return time.localtime()
+        return datetime.now(business_tz(self.site.business.timezone)).timetuple()
 
     def _tz(self):
-        try:
-            from zoneinfo import ZoneInfo
+        from qonaq.config import business_tz
 
-            return ZoneInfo(self.site.business.timezone)
-        except Exception:  # noqa: BLE001 — на Windows без пакета tzdata
-            return None
+        return business_tz(self.site.business.timezone)
 
     def _local_time_label(self) -> str:
         return time.strftime("%H:%M", self._local_now())
@@ -179,6 +175,7 @@ class LiveService:
         lt = self._local_now()
         if due(lt, self.site.alerts.shift_summary_at, self._shift_day):
             self._shift_day = time.strftime("%Y-%m-%d", lt)
+            self.store.set_meta(shift_sent_day=self._shift_day)
             try:
                 text = self.shift_summary(lt)
                 (self.run_dir / f"shift_{self._shift_day}.txt").write_text(text, encoding="utf-8")
@@ -188,6 +185,7 @@ class LiveService:
                 log.warning("сводка смены не отправлена: %s", e)
         if due(lt, self.site.health.daily_at, self._daily_day):
             self._daily_day = time.strftime("%Y-%m-%d", lt)
+            self.store.set_meta(daily_sent_day=self._daily_day)
             daily = build_daily(self.run_dir, self.site.name, st, self.sampler.pick(self.site.health.daily_frames),
                                 self.perf, since=now - 86400 if self.time_base == "epoch" else None,
                                 tz=self._tz())

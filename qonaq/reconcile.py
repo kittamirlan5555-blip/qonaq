@@ -16,7 +16,7 @@ import csv
 import io
 import re
 from dataclasses import asdict, dataclass, field
-from datetime import date, datetime, timedelta, timezone, tzinfo
+from datetime import date, datetime, timedelta, tzinfo
 from html import escape
 from pathlib import Path
 from typing import Any
@@ -40,12 +40,9 @@ DATE_FORMATS = ["%Y-%m-%d", "%d.%m.%Y", "%d.%m.%y", "%d/%m/%Y"]
 
 
 def local_tz(name: str = "Asia/Almaty") -> tzinfo:
-    try:
-        from zoneinfo import ZoneInfo
+    from qonaq.config import business_tz
 
-        return ZoneInfo(name)
-    except Exception:  # noqa: BLE001 — Windows без пакета tzdata: РК — UTC+5 круглый год (с 2024)
-        return timezone(timedelta(hours=5))
+    return business_tz(name)
 
 
 # ---------------------------------------------------------------------------------------------- CSV

@@ -87,3 +87,123 @@ def test_billiard_open_game_overwritten_by_new_start_is_kept():
            {"ts": T + 1500, "type": "game_ended", "zone_id": "B1", "camera_id": "c",
             "payload": {"start": T + 900, "end": T + 1500}}]
     assert sessions_from_events(evs)["B1"] == [(T, T + 30), (T + 900, T + 1500)]
+
+
+def test_steady_clock_survives_wall_clock_jumps():
+    """B8: часы ПК откатились на час — время событий не идёт назад и кадры не перестают обрабатываться."""
+    from qonaq.sources.video import SteadyClock, VideoSource
+
+    w = {"t": 1_000_000.0}
+    m = {"t": 50.0}
+    c = SteadyClock(wall=lambda: w["t"], mono=lambda: m["t"])
+    seen = []
+    for _ in range(10):
+        m["t"] += 0.5
+        w["t"] += 0.5
+        seen.append(c())
+    w["t"] -= 3600  # NTP откатил часы на час
+    for _ in range(10):
+        m["t"] += 0.5
+        w["t"] += 0.5
+        seen.append(c())
+    assert all(b > a for a, b in zip(seen, seen[1:], strict=False))
+    assert abs((seen[-1] - seen[0]) - 9.5) < 1e-6
+    w["t"] += 3600 + 7200  # а теперь вперёд на 2 ч: переякориться (это разрыв, как обрыв камеры)
+    m["t"] += 0.5
+    assert abs(c() - w["t"]) < 1e-6 and c.jumps == 1
+
+    # VideoSource.poll с откатившимися часами продолжает отдавать кадры с частотой process_fps
+    src = VideoSource.__new__(VideoSource)
+    src.kind, src.process_fps, src._last_emit = "stream", 2.0, 0.0
+    src._clock = c
+    import threading
+
+    src._lock = threading.Lock()
+    got = 0
+    for _ in range(20):
+        m["t"] += 0.5
+        w["t"] -= 100  # часы ПК всё время уходят назад
+        src._latest = ("frame", c())
+        got += src.poll() is not None
+    assert got >= 19
+
+
+def test_shift_and_daily_summary_not_resent_after_restart(tmp_path):
+    from qonaq.api.service import LiveService
+    from qonaq.config import AlertThresholds, CameraConfig, HealthSettings
+
+    class Sink:
+        def __init__(self):
+            self.texts = []
+
+        def send(self, text, **_):
+            self.texts.append(text)
+
+        def send_photos(self, *_a, **_k):
+            pass
+
+    site = SiteConfig(site_id="t", name="Тест", runs_dir=str(tmp_path),
+                      cameras=[CameraConfig(id="cam", source=str(tmp_path / "none.mp4"))],
+                      alerts=AlertThresholds(shift_summary_at="00:00"), health=HealthSettings(daily_at="00:00"))
+    sent = []
+    for _ in range(2):  # два запуска службы в один день
+        svc = LiveService(site, use_env_sender=False, run_dir=tmp_path / "live")
+        svc.venue, svc.owner = Sink(), Sink()
+        svc.health_tick()
+        sent.append((len(svc.venue.texts), len([t for t in svc.owner.texts if "сводка за день" in t])))
+        svc.stop()
+    assert sent == [(1, 1), (0, 0)]
+
+
+def test_health_monitor_status_while_pipeline_writes():
+    """B8: status() из потока здоровья/панели, пока пайплайн пишет наблюдения, — без «mutated during iteration»."""
+    import threading
+    import time
+
+    from qonaq.health.monitor import HealthMonitor
+
+    mon = HealthMonitor()
+    mon.register("cam")
+    stop = threading.Event()
+
+    def writer():
+        t = 0.0
+        while not stop.is_set():
+            t += 0.1
+            mon.observe_roles("cam", t, ["guest", "unknown", "staff"] * 5)
+            mon.observe_events("cam", [Event(t, "T01", "state_change", {"from": "FREE", "to": "SEATED_WAITING"}),
+                                       Event(t, "T01", "seated", {"sid": 1})])
+
+    th = threading.Thread(target=writer, daemon=True)
+    th.start()
+    errors = 0
+    t_end = time.time() + 1.5
+    while time.time() < t_end:
+        try:
+            mon.status(live=False)
+        except RuntimeError:
+            errors += 1
+    stop.set()
+    th.join(2)
+    assert errors == 0
+
+
+def test_timezone_fallback_is_the_same_everywhere(monkeypatch):
+    """B8: без базы поясов (Windows без tzdata) алерт, отчёт и сверка показывают одно и то же время."""
+    import zoneinfo
+
+    from qonaq.metrics.compute import fmt_ts
+    from qonaq.reconcile import local_tz
+    from qonaq.strings import clock
+
+    def boom(*_a, **_k):
+        raise zoneinfo.ZoneInfoNotFoundError("нет tzdata")
+
+    monkeypatch.setattr(zoneinfo, "ZoneInfo", boom)
+    monkeypatch.setenv("TZ", "Etc/GMT-6")  # пояс ПК — +6 (устаревший пояс РК)
+    ts = 1_794_690_000.0
+    from datetime import datetime
+
+    want = datetime.fromtimestamp(ts, local_tz("Asia/Almaty")).strftime("%H:%M")
+    assert clock(ts, "Asia/Almaty") == want == fmt_ts(ts, True)
+    assert local_tz("Asia/Almaty").utcoffset(None).total_seconds() == 5 * 3600

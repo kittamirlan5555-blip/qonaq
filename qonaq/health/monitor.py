@@ -16,6 +16,7 @@
 """
 from __future__ import annotations
 
+import threading
 import time
 from collections import defaultdict, deque
 from dataclasses import asdict, dataclass, field
@@ -140,20 +141,36 @@ class _Cam:
         self.walls: deque = deque()  # wall clock обработанных кадров за slow_window_s
 
 
+def _locked(fn):
+    """B8: монитор читают поток здоровья и веб-панель, пишет поток пайплайна — без замка обход deque/dict
+    падал с «mutated during iteration» (на нагрузочном тесте ~1 раз на 130 вызовов status())."""
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(self, *a, **k):
+        with self._lock:
+            return fn(self, *a, **k)
+
+    return wrapper
+
+
 class HealthMonitor:
     def __init__(self, cfg: HealthConfig | None = None, clock=time.time):
+        self._lock = threading.RLock()
         self.cfg = cfg or HealthConfig()
         self.clock = clock
         self._cams: dict[str, _Cam] = defaultdict(_Cam)
         self.flip_counts: dict[str, int] = defaultdict(int)
 
     # ------------------------------------------------------------------ входы
+    @_locked
     def register(self, camera_id: str) -> None:
         """Камера ожидается: если от неё не придёт ни одного кадра за stale_s — это тоже camera_down."""
         c = self._cams[camera_id]
         if c.last_wall is None:
             c.last_wall = self.clock()
 
+    @_locked
     def observe_frame(self, camera_id: str, ts: float, frame: np.ndarray | None) -> None:
         c = self._cams[camera_id]
         now = self.clock()
@@ -208,6 +225,7 @@ class HealthMonitor:
         c.last_novel = ts
         return True
 
+    @_locked
     def observe_roles(self, camera_id: str, ts: float, roles: list[str]) -> None:
         c = self._cams[camera_id]
         if roles:
@@ -215,6 +233,7 @@ class HealthMonitor:
         while c.roles and c.roles[0][0] < ts - self.cfg.unknown_window_s:
             c.roles.popleft()
 
+    @_locked
     def observe_events(self, camera_id: str, events: list[Event]) -> None:
         c = self._cams[camera_id]
         for e in events:
@@ -244,6 +263,7 @@ class HealthMonitor:
                 else:
                     c.short_run[z] = 0
 
+    @_locked
     def observe_result(self, r) -> None:
         """FrameResult пайплайна целиком."""
         self.observe_frame(r.camera_id, r.ts, r.frame)
@@ -251,6 +271,7 @@ class HealthMonitor:
         self.observe_events(r.camera_id, r.events)
 
     # ------------------------------------------------------------------ проверки
+    @_locked
     def check(self, live: bool = True) -> list[Issue]:
         cfg = self.cfg
         out: list[Issue] = []
@@ -298,6 +319,7 @@ class HealthMonitor:
         return Issue(kind, cid, zone, severity, MESSAGES[kind].format(zone=zone, **{"s": 0, "n": 0, "m": 0, "p": 0,
                                                                                     "f": 0, "t": 0, **kw}), data=kw)
 
+    @_locked
     def status(self, live: bool = True) -> dict[str, Any]:
         issues = self.check(live)
         sev = "error" if any(i.severity == "error" for i in issues) else ("warn" if issues else "ok")

@@ -347,3 +347,17 @@ def resolve_path(p: str | Path) -> Path:
 def mask_secrets(url: str) -> str:
     """rtsp://user:pass@host -> rtsp://user:***@host (для логов)."""
     return re.sub(r"(://[^:/@]+):[^@]+@", r"\1:***@", url)
+
+
+def business_tz(name: str | None = "Asia/Almaty"):
+    """Часовой пояс объекта — один для алертов, сводок, отчётов и сверки (B8). Без базы поясов (Windows без пакета
+    tzdata) — UTC+5 для зон Казахстана и Asia/Almaty по умолчанию, а не пояс компьютера: раньше алерт брал пояс ПК,
+    а отчёт — UTC+5, и на ПК с устаревшим поясом РК (+6) время расходилось на час."""
+    from datetime import timedelta, timezone
+
+    try:
+        from zoneinfo import ZoneInfo
+
+        return ZoneInfo(name or "Asia/Almaty")
+    except Exception:  # noqa: BLE001
+        return timezone(timedelta(hours=5))

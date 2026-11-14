@@ -233,7 +233,7 @@ class CamStats:
             self.recent.append((wall, latency))
 
     def window(self, now: float, window_s: float) -> dict[str, float]:
-        lat = [x[1] for x in self.recent if x[0] >= now - window_s]
+        lat = [x[1] for x in tuple(self.recent) if x[0] >= now - window_s]  # снимок: пишет другой поток
         lat_sorted = sorted(lat)
         return {
             "fps": round(len(lat) / window_s, 2),

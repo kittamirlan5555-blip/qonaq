@@ -69,9 +69,9 @@ def occupancy_steps(intervals: list[Interval], t0: float) -> list[tuple[float, f
     return steps
 
 
-def fmt_ts(ts: float, epoch: bool) -> str:
+def fmt_ts(ts: float, epoch: bool, tz=None) -> str:
     if epoch:
-        return datetime.fromtimestamp(ts, ALMATY).strftime("%H:%M")
+        return datetime.fromtimestamp(ts, tz or ALMATY).strftime("%H:%M")
     ts = max(0, int(ts))
     return f"{ts // 3600}:{ts % 3600 // 60:02d}:{ts % 60:02d}" if ts >= 3600 else f"{ts // 60:02d}:{ts % 60:02d}"
 
@@ -93,6 +93,9 @@ def compute_metrics(store: EventStore, site: SiteConfig | None = None, zones: li
     events = store.events()
     sessions = store.sessions("table")
     epoch = meta.get("time_base") == "epoch"
+    from qonaq.config import business_tz
+
+    tz = business_tz(biz.timezone)
     all_ts = [e["ts"] for e in events] + [s["seated_ts"] for s in sessions]
     t0 = float(meta.get("t_start", min(all_ts) if (epoch and all_ts) else 0.0))
     if t_end is None:
@@ -235,7 +238,7 @@ def compute_metrics(store: EventStore, site: SiteConfig | None = None, zones: li
     while t < t_end and len(edges) < 200:
         edges.append((max(t, t0), min(t + bucket, t_end)))
         t += bucket
-    heat = {"bucket_s": bucket, "labels": [fmt_ts(a, epoch) for a, _ in edges], "rows": []}
+    heat = {"bucket_s": bucket, "labels": [fmt_ts(a, epoch, tz) for a, _ in edges], "rows": []}
     for zid in table_ids:
         row = []
         for a, b in edges:
@@ -251,7 +254,7 @@ def compute_metrics(store: EventStore, site: SiteConfig | None = None, zones: li
     return {
         "site": {"id": site.site_id, "name": site.name, "profile": site.profile},
         "period": {"t0": t0, "t_end": t_end, "duration_s": round(duration, 1), "epoch": epoch,
-                   "from": fmt_ts(t0, epoch), "to": fmt_ts(t_end, epoch)},
+                   "from": fmt_ts(t0, epoch, tz), "to": fmt_ts(t_end, epoch, tz)},
         "tables": {"total": n_tables, "with_activity": len(table_ids), "avg_load": round(avg_load, 3)},
         "response": response,
         "still_waiting": len(still_waiting),

@@ -20,6 +20,7 @@ dependencies = [
     "python-dotenv",
     "imageio-ffmpeg",
     "onnxruntime",
+    "tzdata; sys_platform == 'win32'",  # B8: zoneinfo на Windows без базы поясов
 ]
 
 [project.optional-dependencies]

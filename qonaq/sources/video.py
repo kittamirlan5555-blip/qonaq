@@ -54,6 +54,43 @@ def parse_source(spec: str) -> tuple[str, str | int]:
     return "file", spec
 
 
+class SteadyClock:
+    """Время потоков (B8): эпоха, но идущая по монотонным часам — не прыгает назад при подводке часов ПК.
+
+    Раньше кадр/с ограничивался по time.time(): откат часов (NTP после загрузки мини-ПК без батарейки, ручная
+    подводка) на час останавливал обработку камеры на час, а небольшие откаты давали отрицательные интервалы в
+    логике (таймеры «ушли»/«не убран» не срабатывали). Теперь: t = эпоха старта + монотонное время.
+    Если часы ПК ушли **вперёд** больше чем на jump_s — переякориться (в логике это разрыв, как обрыв камеры).
+    Если **назад** — время событий продолжает идти монотонно (опережает часы ПК), в лог — предупреждение;
+    после перезапуска службы — снова по часам ПК."""
+
+    def __init__(self, wall=time.time, mono=time.monotonic, jump_s: float = 60.0):
+        self._wall, self._mono, self.jump_s = wall, mono, jump_s
+        self._lock = threading.Lock()
+        self._w0, self._m0 = wall(), mono()
+        self._warned_back = 0.0
+        self.jumps = 0
+
+    def __call__(self) -> float:
+        with self._lock:
+            m = self._mono()
+            t = self._w0 + (m - self._m0)
+            d = self._wall() - t
+            if d > self.jump_s:
+                log.warning("часы ПК ушли вперёд на %.0f с — дальше время событий по новым часам", d)
+                self._w0, self._m0 = t + d, m
+                self.jumps += 1
+                return t + d
+            if d < -self.jump_s and m - self._warned_back > 600:
+                self._warned_back = m
+                log.warning("часы ПК ушли назад на %.0f с — время событий идёт монотонно (опережает часы ПК) до "
+                            "перезапуска службы; проверьте синхронизацию времени (NTP)", -d)
+            return t
+
+
+steady_clock = SteadyClock()
+
+
 def backoff_delays(base: float = 1.0, factor: float = 2.0, max_delay: float = 15.0) -> Iterator[float]:
     d = base
     while True:
@@ -107,7 +144,7 @@ class VideoSource:
         max_seconds: float | None = None,
         opener=None,
         sleep=time.sleep,
-        clock=time.time,
+        clock=steady_clock,
         timeout_s: float = 10.0,
     ):
         self.spec = spec
