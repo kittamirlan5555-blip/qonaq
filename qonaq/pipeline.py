@@ -289,6 +289,9 @@ class Pipeline:
                 )
         self._opened = False
         self._active: set[str] = set(self.sources)
+        self._rois: dict[tuple, tuple | None] = {}
+        self._det_count: dict[str, int] = {}
+        self._last_dets: dict[str, list[Detection]] = {}
 
     def open(self) -> Pipeline:
         if not self._opened:
@@ -325,9 +328,7 @@ class Pipeline:
                 time.sleep(0.01)
                 return []
             return None
-        t0 = time.perf_counter()
-        dets = self.detector.detect([b[1] for b in batch])
-        self.stats.detect_s += time.perf_counter() - t0
+        dets = self._detect(batch)
         results = []
         for (cam_id, frame, ts), d in zip(batch, dets, strict=True):
             res = self.cameras[cam_id].process(frame, ts, d)
@@ -340,6 +341,52 @@ class Pipeline:
             self.stats.cams.setdefault(cam_id, CamStats()).add(now, lat)
         self.stats.frames += len(batch)
         return results
+
+    def _roi(self, cam_id: str, frame: np.ndarray) -> tuple[float, float, float, float] | None:
+        """S2: прямоугольник вокруг зон столов (+15%) — плитки детектора только там."""
+        if not self.site.detector.roi_tiles:
+            return None
+        h, w = frame.shape[:2]
+        key = (cam_id, w, h)
+        if key not in self._rois:
+            zs = self.cameras[cam_id].zones.scaled(w, h)
+            pts = [pt for z in zs.zones if z.type in ("table", "waiting_area", "service_point") for pt in z.polygon]
+            if not pts:
+                self._rois[key] = None
+            else:
+                xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+                mx, my = 0.15 * (max(xs) - min(xs)), 0.15 * (max(ys) - min(ys)) + 0.05 * h
+                self._rois[key] = (max(0.0, min(xs) - mx), max(0.0, min(ys) - my), min(float(w), max(xs) + mx),
+                                   min(float(h), max(ys) + my))
+        return self._rois[key]
+
+    def _detect(self, batch: list[tuple[str, np.ndarray, float]]) -> list[list[Detection]]:
+        """Детектор раз в detect_every кадров камеры (S2); между ними — последние детекции этой камеры."""
+        every = self.site.detector.detect_every
+        need = [i for i, (cam_id, _, _) in enumerate(batch)
+                if every <= 1 or self._det_count.get(cam_id, 0) % every == 0 or cam_id not in self._last_dets]
+        for cam_id, _, _ in batch:
+            self._det_count[cam_id] = self._det_count.get(cam_id, 0) + 1
+        out: list[list[Detection] | None] = [None] * len(batch)
+        if need:
+            frames = [batch[i][1] for i in need]
+            t0 = time.perf_counter()
+            if self.site.detector.roi_tiles and getattr(self.detector, "detect", None):
+                rois = [self._roi(batch[i][0], batch[i][1]) for i in need]
+                try:
+                    fresh = self.detector.detect(frames, rois)
+                except TypeError:  # детектор без поддержки roi
+                    fresh = self.detector.detect(frames)
+            else:
+                fresh = self.detector.detect(frames)
+            self.stats.detect_s += time.perf_counter() - t0
+            for i, d in zip(need, fresh, strict=True):
+                out[i] = d
+                self._last_dets[batch[i][0]] = d
+        for i, (cam_id, _, _) in enumerate(batch):
+            if out[i] is None:
+                out[i] = list(self._last_dets.get(cam_id, []))
+        return out  # type: ignore[return-value]
 
     def run(self, on_result: Callable[[FrameResult], None] | None = None,
             stop: threading.Event | None = None, progress_every_s: float = 0.0) -> PipelineStats:
@@ -361,8 +408,9 @@ class Pipeline:
                 now = time.perf_counter()
                 if progress_every_s and now - last_log >= progress_every_s:
                     last_log = now
-                    log.info("обработано %d кадров, %.1f кадр/с, время сцены %.0f с", self.stats.frames,
-                             self.stats.frames / (now - t_start), max(last_ts.values(), default=0.0))
+                    scene = max((last_ts[c] - first_ts[c] for c in last_ts), default=0.0)
+                    log.info("обработано %d кадров, %.1f кадр/с, сцена %.0f с", self.stats.frames,
+                             self.stats.frames / (now - t_start), scene)
         finally:
             self.stats.wall_s = time.perf_counter() - t_start
             self.stats.scene_s = max((last_ts[c] - first_ts[c] for c in last_ts), default=0.0)

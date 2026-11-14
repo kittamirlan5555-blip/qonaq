@@ -331,3 +331,36 @@ def test_synth_week_and_pilot_report(tmp_path):
     assert B["median"] < A["median"]
     text = out.read_text(encoding="utf-8")
     assert "СИНТЕТИЧЕСКИХ" in text and "Как было и как стало" in text and "<svg" in text and "медиан" in text
+
+
+# ---------------------------------------------------------------- S2: плитки, ROI, детектор через кадр
+def test_tile_boxes_cover_roi():
+    from qonaq.detect.onnx_yolox import tile_boxes
+
+    assert tile_boxes(1920, 1080, 1) == []
+    assert tile_boxes(1920, 1080, 2) == [(0, 0, 1152, 1080), (768, 0, 1920, 1080)]  # прежнее поведение
+    roi = (900, 200, 1920, 800)
+    boxes = tile_boxes(1920, 1080, 3, roi)
+    assert len(boxes) == 6
+    assert min(b[0] for b in boxes) == 900 and max(b[2] for b in boxes) <= 1920
+    assert min(b[1] for b in boxes) == 200 and max(b[3] for b in boxes) <= 800
+
+
+def test_detect_every_reuses_last_detections():
+    from qonaq.detect.base import Detection, FakeDetector
+
+    class Counting(FakeDetector):
+        def detect(self, frames):
+            self.calls += 1
+            return [[Detection(10, 10, 20, 40, 0.9, "person")] for _ in frames]
+
+    site = SiteConfig(cameras=[CameraConfig(id="a", source="rtsp://x/a")])
+    site.detector.detect_every = 3
+    det = Counting()
+    pipe = Pipeline(site, detector=det, sources={"a": StreamStub(alive=True)})
+    pipe.open()
+    n = 0
+    while n < 9:
+        n += len(pipe.step())
+        time.sleep(0.001)
+    assert det.calls == 3

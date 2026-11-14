@@ -5,7 +5,8 @@ YOLOX (Megvii) распространяется под Apache-2.0, готовы�
 (см. DECISIONS.md D-002/D-003).
 
 Режим `tiles=2`: кроме полного кадра, прогоняются две перекрывающиеся половины — мелкие люди на
-дальних столах 1080p-камеры находятся заметно лучше ценой x3 по времени.
+дальних столах 1080p-камеры находятся заметно лучше ценой x3 по времени. `tiles=N≥3` — сетка плиток;
+`roi` — плитки только в области зон столов (S2, EVAL §15).
 """
 from __future__ import annotations
 
@@ -138,19 +139,26 @@ class OnnxYoloxDetector:
         boxes[:, [1, 3]] = boxes[:, [1, 3]].clip(0, h)
         return boxes, scores, self._cls_idx[best]
 
-    def _detect_one(self, frame: np.ndarray) -> list[Detection]:
+    def _detect_one(self, frame: np.ndarray, roi: tuple[float, float, float, float] | None = None
+                    ) -> list[Detection]:
         h, w = frame.shape[:2]
         parts = [self._infer(frame)]
-        if self.tiles >= 2 and w > h * 1.2:
-            tw = min(w, max(h, int(w * 0.6)))  # две плитки с перекрытием
-            for x0 in (0, w - tw):
-                b, s, c = self._infer(frame[:, x0:x0 + tw])
-                if len(b):
-                    # рамки, упирающиеся во внутренний край плитки, обрезаны — их увидит соседняя плитка
-                    inner = (b[:, 2] >= tw - 2) if x0 == 0 else (b[:, 0] <= 2)
-                    b, s, c = b[~inner], s[~inner], c[~inner]
-                    b = b + np.array([x0, 0, x0, 0], dtype=np.float32)
-                parts.append((b, s, c))
+        for x0, y0, x1, y1 in tile_boxes(w, h, self.tiles, roi):
+            b, s, c = self._infer(frame[y0:y1, x0:x1])
+            if len(b):
+                # рамки, упирающиеся во внутренний край плитки, обрезаны — их увидит соседняя плитка/полный кадр
+                cut = np.zeros(len(b), bool)
+                if x0 > 0:
+                    cut |= b[:, 0] <= 2
+                if x1 < w:
+                    cut |= b[:, 2] >= (x1 - x0) - 2
+                if y0 > 0:
+                    cut |= b[:, 1] <= 2
+                if y1 < h:
+                    cut |= b[:, 3] >= (y1 - y0) - 2
+                b, s, c = b[~cut], s[~cut], c[~cut]
+                b = b + np.array([x0, y0, x0, y0], dtype=np.float32)
+            parts.append((b, s, c))
         boxes = np.concatenate([p[0] for p in parts])
         scores = np.concatenate([p[1] for p in parts])
         classes = np.concatenate([p[2] for p in parts])
@@ -163,5 +171,39 @@ class OnnxYoloxDetector:
                                       float(scores[idx][i]), self._classes[int(k)]))
         return dets
 
-    def detect(self, frames: Sequence[np.ndarray]) -> list[list[Detection]]:
-        return [self._detect_one(f) for f in frames]
+    def detect(self, frames: Sequence[np.ndarray], rois: Sequence | None = None) -> list[list[Detection]]:
+        """rois — по прямоугольнику на кадр (x1, y1, x2, y2 в пикселях) или None: плитки только внутри него (S2)."""
+        rois = list(rois) if rois is not None else [None] * len(frames)
+        return [self._detect_one(f, r) for f, r in zip(frames, rois, strict=True)]
+
+
+def tile_boxes(w: int, h: int, tiles: int, roi: tuple[float, float, float, float] | None = None,
+               overlap: float = 0.2) -> list[tuple[int, int, int, int]]:
+    """Плитки (x0, y0, x1, y1) поверх полного кадра. tiles=1 — нет плиток; 2 — две перекрывающиеся половины
+    (как раньше); N ≥ 3 — сетка N столбцов × строк по пропорции области. roi — только эта область (зоны столов)."""
+    if tiles <= 1:
+        return []
+    rx0, ry0, rx1, ry1 = (0.0, 0.0, float(w), float(h)) if roi is None else roi
+    rx0, ry0 = max(0, int(rx0)), max(0, int(ry0))
+    rx1, ry1 = min(w, int(rx1)), min(h, int(ry1))
+    rw, rh = rx1 - rx0, ry1 - ry0
+    if rw < 32 or rh < 32:
+        return []
+    if tiles == 2 and roi is None:
+        if w <= h * 1.2:
+            return []
+        tw = min(w, max(h, int(w * 0.6)))
+        return [(0, 0, tw, h), (w - tw, 0, w, h)]
+    cols = tiles
+    rows = max(1, int(round(tiles * rh / max(rw, 1))))
+    tw = int(rw / (cols - (cols - 1) * overlap)) if cols > 1 else rw
+    th = int(rh / (rows - (rows - 1) * overlap)) if rows > 1 else rh
+    out = []
+    for r in range(rows):
+        y0 = ry0 + (int(r * th * (1 - overlap)) if rows > 1 else 0)
+        y0 = min(y0, ry1 - th)
+        for c in range(cols):
+            x0 = rx0 + (int(c * tw * (1 - overlap)) if cols > 1 else 0)
+            x0 = min(x0, rx1 - tw)
+            out.append((x0, y0, x0 + tw, y0 + th))
+    return out

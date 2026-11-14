@@ -1,0 +1,69 @@
+name: demo_reel
+description: "Полный цикл для демо-ролика: сели → ждут 3+ мин → алерт → официант → ушли → стол не убран → убрали."
+background: {video: data/videos/topdown_cafe_empty.mp4, at_s: 1.0}
+fps: 2
+duration_s: 470
+sit_h: 85
+stand_h: 125
+staff_venue: C
+guest_venues: [C, B]
+zones:
+- id: T1
+  polygon:
+  - [392, 165]
+  - [565, 165]
+  - [565, 312]
+  - [392, 312]
+  seats:
+  - [440, 252]
+  - [515, 254]
+  - [478, 318]
+- id: T2
+  polygon:
+  - [195, 240]
+  - [352, 240]
+  - [352, 400]
+  - [195, 400]
+  seats:
+  - [240, 322]
+  - [312, 328]
+  - [275, 398]
+actors:
+- id: g1
+  kind: guest
+  sprite: 13
+  path:
+  - t: 0
+    at: &out [760, 425]
+    visible: false
+  - t: 9
+    at: &door [720, 425]
+    pose: stand
+  - {t: 15, at: T1, pose: sit, seat: 0}
+  - {t: 320, at: *door, pose: stand}
+  - {t: 321, at: *out, visible: false}
+- id: g2
+  kind: guest
+  sprite: 31
+  path:
+  - {t: 0, at: *out, visible: false}
+  - {t: 9, at: *door, pose: stand}
+  - {t: 15, at: T1, pose: sit, seat: 1}
+  - {t: 320, at: *door, pose: stand}
+  - {t: 321, at: *out, visible: false}
+- id: w1
+  kind: staff
+  sprite: 9
+  path:
+  - {t: 0, at: *out, visible: false}
+  - {t: 209, at: *door, pose: stand}
+  - {t: 215, at: T1, pose: stand, seat: 2}
+  - {t: 240, at: *door, pose: stand}
+  - {t: 241, at: *out, visible: false}
+  - {t: 434, at: *door, pose: stand}
+  - {t: 440, at: T1, pose: stand, seat: 2}
+  - {t: 458, at: *door, pose: stand}
+  - {t: 459, at: *out, visible: false}
+alerts_expected: [no_waiter]
+alerts_forbidden: [dirty_table]
+notes: "Только для `python -m qonaq demo-reel`: ролик-иллюстрация, не тест логики (тесты — остальные сценарии)."

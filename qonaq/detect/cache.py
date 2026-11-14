@@ -56,13 +56,16 @@ class CachingDetector:
             self.device = getattr(self._inner, "device", "?")
         return self._inner
 
-    def detect(self, frames: Sequence[np.ndarray]) -> list[list[Detection]]:
-        keys = [frame_key(f) for f in frames]
+    def detect(self, frames: Sequence[np.ndarray], rois=None) -> list[list[Detection]]:
+        keys = [frame_key(f) + (f"@{tuple(int(v) for v in r)}" if r is not None else "")
+                for f, r in zip(frames, rois or [None] * len(frames), strict=True)]
         todo = [i for i, k in enumerate(keys) if k not in self._mem]
         self.hits += len(frames) - len(todo)
         self.misses += len(todo)
         if todo:
-            fresh = self._detector().detect([frames[i] for i in todo])
+            det = self._detector()
+            sub = [frames[i] for i in todo]
+            fresh = det.detect(sub, [rois[i] for i in todo]) if rois is not None else det.detect(sub)
             with self.path.open("a", encoding="utf-8") as f:
                 for i, dets in zip(todo, fresh, strict=True):
                     self._mem[keys[i]] = list(dets)

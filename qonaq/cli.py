@@ -15,7 +15,7 @@ def _add_common(p: argparse.ArgumentParser) -> None:
     p.add_argument("--fps", type=float, help="сколько кадров в секунду обрабатывать (по умолчанию из конфига)")
     p.add_argument("--backend", choices=["auto", "ultralytics", "onnx"], help="детектор")
     p.add_argument("--model", help="модель: yolo11n.pt (ultralytics) или yolox_s/yolox_m (onnx)")
-    p.add_argument("--tiles", type=int, choices=[1, 2], help="onnx: 2 = доп. прогон двух половин кадра")
+    p.add_argument("--tiles", type=int, choices=[1, 2, 3, 4], help="onnx: 2 = две половины кадра; 3–4 — сетка")
     p.add_argument("--device", help="auto | cpu | cuda:0")
     p.add_argument("--conf", type=float, help="порог уверенности детектора")
     p.add_argument("--max-seconds", type=float, help="обработать только первые N секунд")
@@ -87,8 +87,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--after-to", help="pilot: конец периода «стало»")
     p.add_argument("--out", help="pilot: куда сохранить HTML (по умолчанию runs/pilot_report.html)")
 
+    p = sub.add_parser("demo-reel", help="ролик для продаж 30–45 с: синтетика полного цикла + реальный CCTV (S6)")
+    p.add_argument("--scenario", default="configs/synth/demo_reel.yaml")
+    p.add_argument("--real", default="data/videos/cctv_terrace_cafe.mov", help="реальная запись для вставки")
+    p.add_argument("--real-seconds", type=float, default=8.0)
+    p.add_argument("--out", default="runs/demo_reel.mp4")
+    p.add_argument("--rerun", action="store_true", help="пересчитать синтетику и реальный кусок заново")
+    _add_common(p)
+
     p = sub.add_parser("synth-week", help="синтетическая неделя зала (S5): параметры YAML -> журнал событий")
-    p.add_argument("params", nargs="+", help="configs/synth/week_*.yaml")
+    p.add_argument("params", nargs="+", help="configs/synth_week/*.yaml")
     p.add_argument("--out", default="runs/pilot_synth", help="папка; журнал каждой недели — <out>/<name>/")
     p.add_argument("--site", help="YAML объекта (пороги)")
 
@@ -102,7 +110,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--fps", type=float)
     p.add_argument("--backend", choices=["auto", "ultralytics", "onnx"])
     p.add_argument("--model")
-    p.add_argument("--tiles", type=int, choices=[1, 2])
+    p.add_argument("--tiles", type=int, choices=[1, 2, 3, 4])
     p.add_argument("--device")
     p.add_argument("--conf", type=float)
 
@@ -693,6 +701,41 @@ def cmd_service(args) -> int:
     return run(args)
 
 
+def cmd_demo_reel(args) -> int:
+    from qonaq.config import PROJECT_ROOT
+    from qonaq.render.reel import build_reel
+    from qonaq.runner import process_file
+    from qonaq.synth.render import build
+    from qonaq.synth.scenario import Scenario
+
+    sp = Path(args.scenario)
+    sc = Scenario.load(sp)
+    name = f"synth_{sc.name}"
+    video = PROJECT_ROOT / "data" / "videos" / f"{name}.mp4"
+    if args.rerun or not video.exists():
+        build(sp, PROJECT_ROOT)  # нужны датасеты и индекс: fetch_datasets.py + qonaq data index
+    site = _site(args)
+    site.process_fps = sc.fps
+    site.thresholds.preexisting_grace_s = 0
+    synth_run = Path(site.runs_dir) / name
+    if args.rerun or not (synth_run / "demo.mp4").exists():
+        process_file(str(video), site, out=str(synth_run), mode="demo", blur=True, write_video=True)
+    real_run = None
+    real = Path(args.real)
+    if real.exists():
+        real_run = Path(site.runs_dir) / f"reel_{real.stem}"
+        if args.rerun or not (real_run / "demo.mp4").exists():
+            rs = _site(args)
+            rs.process_fps = args.fps or 4
+            process_file(str(real), rs, out=str(real_run), mode="demo", blur=True,
+                         max_seconds=args.real_seconds + 4, write_video=True)
+    else:
+        print(f"нет {real} — реальный кусок пропущен (python scripts/fetch_videos.py)")
+    out = build_reel(synth_run, real_run, Path(args.out), real_s=args.real_seconds, scene_fps=sc.fps)
+    print(f"Демо-ролик: {out}")
+    return 0
+
+
 def cmd_synth_week(args) -> int:
     from qonaq.synth.week import WeekParams, simulate
 
@@ -708,6 +751,7 @@ def cmd_synth_week(args) -> int:
 
 
 HANDLERS = {
+    "demo-reel": cmd_demo_reel,
     "synth-week": cmd_synth_week,
     "service": cmd_service,
     "setup": cmd_setup,

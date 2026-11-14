@@ -24,7 +24,11 @@ class DetectorConfig(_Model):
     # auto: ultralytics, если установлен; иначе YOLOX через onnxruntime (Apache-2.0, без PyTorch).
     backend: Literal["auto", "ultralytics", "onnx", "fake"] = "auto"
     onnx_model: str = "yolox_s"  # yolox_tiny | yolox_s | yolox_m | yolox_l — скачивается из релиза YOLOX
-    onnx_tiles: int = Field(1, ge=1, le=2)  # 2 = полный кадр + две половины (мелкие люди, x3 по времени)
+    onnx_tiles: int = Field(1, ge=1, le=4)  # 2 = полный кадр + две половины (мелкие люди, x3 по времени); 3–4 — сетка
+    # S2: плитки только в прямоугольнике вокруг зон столов (а не по всему кадру) — дешевле при том же выигрыше
+    roi_tiles: bool = False
+    # S2: детектор на каждом N-м кадре камеры; между ними — последние детекции (трекер и логика идут каждый кадр)
+    detect_every: int = Field(1, ge=1, le=10)
     # Список кандидатов: берётся первая модель, которую удалось загрузить.
     model: str = "yolo11n.pt"
     fallback_models: list[str] = Field(default_factory=lambda: ["yolov8n.pt"])

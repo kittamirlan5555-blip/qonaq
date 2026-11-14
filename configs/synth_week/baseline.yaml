@@ -1,5 +1,5 @@
 # Синтетическая «неделя как есть» для примера отчёта пилота (S5). Видео нет: план посадок → наблюдения →
-# настоящая логика столов. python -m qonaq synth-week configs/synth/week_baseline.yaml
+# настоящая логика столов. python -m qonaq synth-week configs/synth_week/baseline.yaml
 name: week_baseline
 description: "Как есть: 10 столов, двое официантов; в пик подходят медленнее, грязные столы стоят долго."
 seed: 11
