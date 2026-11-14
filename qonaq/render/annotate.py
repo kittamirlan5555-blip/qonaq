@@ -23,7 +23,7 @@ GREEN, YELLOW, RED = (90, 200, 80), (0, 210, 255), (60, 60, 235)
 BLUE, ORANGE, GRAY, WHITE, DARK = (235, 150, 50), (0, 140, 255), (150, 150, 150), (255, 255, 255), (28, 28, 30)
 ROLE_COLOR = {"guest": (120, 220, 120), "staff": (255, 170, 60), "unknown": (200, 200, 200)}
 TYPE_COLOR = {"entrance": (220, 120, 220), "waiting_area": (0, 210, 255), "service_point": (235, 150, 50),
-              "ignore": (90, 90, 90), "table": GREEN}
+              "ignore": (90, 90, 90), "table": GREEN, "billiard_table": GREEN}
 
 
 def _mix(a: tuple[int, int, int], b: tuple[int, int, int], k: float) -> tuple[int, int, int]:
@@ -43,6 +43,8 @@ def state_color(snap: dict[str, Any], no_waiter_s: float = 180.0) -> tuple[int, 
         return RED if snap.get("alert") else BLUE
     if state == "NEEDS_CLEANING":
         return RED if snap.get("alert") else ORANGE
+    if snap.get("type") == "billiard_table":  # B2: свободен — зелёный, игра — синий, пауза — жёлтый
+        return {"IDLE": GREEN, "IN_PLAY": BLUE, "PAUSED": YELLOW}.get(state, GRAY)
     return TYPE_COLOR.get(snap.get("type", ""), GRAY)
 
 
@@ -62,6 +64,8 @@ def zone_label(zone: Zone, snap: dict[str, Any] | None) -> str:
             return f"{name} · {guests_word(max(1, snap.get('guests', 1)))} · {fmt_mmss(snap.get('session_s', 0))}"
         if state == "NEEDS_CLEANING":
             return f"{name} · {t('short.NEEDS_CLEANING')} {fmt_mmss(snap.get('dirty_s', 0))}"
+    if zone.type == "billiard_table":
+        return f"{zone.title} · {snap.get('label', '')}"
     if "count" in snap:
         return f"{zone.title} · {snap['count']}"
     return name
@@ -77,7 +81,8 @@ def draw_zones(img: np.ndarray, zones: ZoneSet, states: dict[str, dict[str, Any]
         zones = zones.model_copy(update={"zones": [z for z in zones.zones if z.type != "ignore"]})
     for z in zones.zones:
         snap = states.get(z.id)
-        color = state_color(snap, no_waiter_s) if snap and z.type == "table" else TYPE_COLOR[z.type]
+        color = (state_color(snap, no_waiter_s) if snap and z.type in ("table", "billiard_table")
+                 else TYPE_COLOR[z.type])
         colors[z.id] = color
         pts = np.array(z.polygon, dtype=np.int32)
         if z.type != "ignore":
@@ -266,6 +271,10 @@ class DemoRenderer:
             if state == "NEEDS_CLEANING":
                 return status, fmt_mmss(snap.get("dirty_s", 0))
             return status, fmt_mmss(snap.get("state_s", 0))
+        if z.type == "billiard_table":
+            lamp = snap.get("lamp_on")
+            extra = "" if lamp is None else (" · лампа горит" if lamp else " · лампа выкл.")
+            return f"{z.title} · {t('state.' + state) if state else ''}{extra}", fmt_mmss(snap.get("session_s", 0))
         label = z.name or t(f"zone.{z.type}")
         if z.type == "service_point":
             staffed = snap.get("staffed")

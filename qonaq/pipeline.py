@@ -94,6 +94,7 @@ class CameraRuntime:
         self.engine: Engine = create_engine(self.zones, site, pos=pos)
         self.appearance = None
         self.table_signals = None
+        self.felt = None  # B2: анализ сукна бильярдных столов
         self.frame_index = 0
         self.last_result: FrameResult | None = None
 
@@ -108,6 +109,10 @@ class CameraRuntime:
             self.zones = scaled
             self.assigner = ZoneAssigner(self.zones)
             self.engine = create_engine(self.zones, self.site, pos=self._pos)
+        if self.zones.by_type("billiard_table"):
+            from qonaq.billiard.felt import FeltSet
+
+            self.felt = FeltSet(self.zones, (w, h), self.site.billiard)
         th = self.site.thresholds
         if th.use_table_appearance and self.site.profile == "restaurant":
             from qonaq.zones.appearance import TableAppearance
@@ -179,6 +184,7 @@ class CameraRuntime:
                                        self.engine.snapshot(ts)) if self.appearance else {}
         people_boxes = [t.xyxy for t in tracks] + [d.xyxy for d in persons_all]
         tsig = self.table_signals.update(frame, ts, people_boxes, detections) if self.table_signals else {}
+        felt = self.felt.update(frame) if self.felt else {}
         observations = []
         for z in self.zones.zones:
             if z.type == "ignore":
@@ -193,6 +199,7 @@ class CameraRuntime:
                 table_signals=tuple(tsig[z.id]) if z.id in tsig else None,
                 guest_confidence=float(np.mean(pz["gconf"])) if pz["gconf"] else None,
                 standing_tracks=tuple(pz["standing"]) if site.roles.visit_requires_standing else None,
+                felt=felt.get(z.id),
             ))
         events = self.engine.update(observations)
         for e in events:
@@ -387,6 +394,21 @@ class Pipeline:
             if out[i] is None:
                 out[i] = list(self._last_dets.get(cam_id, []))
         return out  # type: ignore[return-value]
+
+    def finish(self) -> list[Event]:
+        """Конец записи / штатная остановка: движки, у которых есть finish (billiard), закрывают открытые сессии."""
+        out: list[Event] = []
+        for cam_id, cam in self.cameras.items():
+            fin = getattr(cam.engine, "finish", None)
+            if fin is None or cam.last_result is None:
+                continue
+            evs = fin(cam.last_result.ts)
+            for e in evs:
+                e.camera_id = cam_id
+            out += evs
+        if out and self.store is not None:
+            self.store.add(out)
+        return out
 
     def run(self, on_result: Callable[[FrameResult], None] | None = None,
             stop: threading.Event | None = None, progress_every_s: float = 0.0) -> PipelineStats:

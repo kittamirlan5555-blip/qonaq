@@ -3,6 +3,9 @@ from __future__ import annotations
 
 RU = {
     "state.FREE": "Свободен",
+    "state.IDLE": "Свободен",
+    "state.IN_PLAY": "Игра",
+    "state.PAUSED": "Пауза",
     "state.SEATED_WAITING": "Ждут официанта",
     "state.SERVED": "Обслуживаются",
     "state.NEEDS_CLEANING": "Не убран",
@@ -42,6 +45,7 @@ RU = {
     "zone.entrance": "Вход",
     "zone.waiting_area": "Ожидание",
     "zone.service_point": "Стойка",
+    "zone.billiard_table": "Бильярдный стол",
 }
 
 _LANG = RU

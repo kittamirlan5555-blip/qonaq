@@ -1,0 +1,26 @@
+# Бильярдная (SPRINT3): 2 камеры над столами + бар. Профиль billiard: столы billiard_table — по движению шаров
+# на сукне (qonaq/billiard/felt.py → qonaq/logic/billiard.py), места у стойки — зоны table (ресторанная логика).
+# Сверка с учётом: python -m qonaq reconcile --events runs/live_billiard_example/events.sqlite --sessions paid.csv \
+#     --site configs/sites/billiard_example.yaml           (docs/billiard/RECONCILE.md)
+site_id: billiard_example
+name: Бильярдная «Пример»
+profile: billiard
+process_fps: 2          # шар катится 3–9 с — 2 кадра/с хватает; меньше 2 не ставить
+cameras:
+  - id: hall_1
+    name: Столы 1–2 (Hikvision 102)
+    source: rtsp://${QONAQ_NVR_USER:-admin}:${QONAQ_NVR_PASSWORD}@${QONAQ_NVR_IP:-192.168.1.64}:554/Streaming/Channels/102
+    zones: configs/zones/billiard_hall_1.yaml   # создать: python -m qonaq zones edit (тип billiard_table, 4 угла сукна)
+  - id: bar
+    name: Бар (Hikvision 202)
+    source: rtsp://${QONAQ_NVR_USER:-admin}:${QONAQ_NVR_PASSWORD}@${QONAQ_NVR_IP:-192.168.1.64}:554/Streaming/Channels/202
+    zones: configs/zones/billiard_bar.yaml      # зоны table — места у стойки
+billiard:
+  tariff_per_hour: 2500   # ₸/час, если для стола не задан свой
+  tariffs: {B1: 2500, B2: 2500, B5: 4000}   # VIP/снукер — дороже
+  start_episodes: 3        # K: столько эпизодов движения шаров…
+  start_window_s: 300      # T: …за столько секунд — игра началась
+  pause_max_s: 600         # P: паузы короче не рвут сессию
+business:
+  open_hours: "12:00-04:00"
+  timezone: Asia/Almaty

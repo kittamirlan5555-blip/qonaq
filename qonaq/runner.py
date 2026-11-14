@@ -102,10 +102,11 @@ def process_file(video: str | Path, site: SiteConfig | None = None, out: str | P
         state["n"] += 1
 
     stats = pipe.run(on_result=on_result, progress_every_s=20)
+    pipe.finish()
     if sink is not None:
         sink.close()
     store.set_meta(time_base="video", site_id=site.site_id, profile=site.profile, scene_s=stats.scene_s,
-                   tables=sum(len(c.zones.by_type("table")) for c in pipe.cameras.values()))
+                   tables=sum(len(c.zones.by_type("table", "billiard_table")) for c in pipe.cameras.values()))
     _write_run_meta(run_dir, site, pipe, stats, {"video": video.name, "mode": mode, "blur": blur,
                                                 "events": len(store.events())})
     import json as _json

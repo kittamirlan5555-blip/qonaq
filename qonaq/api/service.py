@@ -112,6 +112,7 @@ class LiveService:
     def _run(self) -> None:
         try:
             self.pipeline.run(on_result=self._on_result, stop=self._stop, progress_every_s=60)
+            self.pipeline.finish()  # штатная остановка: открытые сессии бильярда закрываются (reason=shutdown)
         except Exception as e:  # noqa: BLE001
             self.error = f"{type(e).__name__}: {e}"
             log.exception("пайплайн остановился с ошибкой")

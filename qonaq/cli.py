@@ -227,12 +227,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--models", default="models")
 
     from qonaq.alerts.cli_telegram import add_parser as add_telegram
+    from qonaq.billiard.cli import add_parser as add_billiard
     from qonaq.setup.service import add_parser as add_service
     from qonaq.setup.wizard import add_parser as add_setup
 
     add_telegram(sub)
     add_setup(sub)
     add_service(sub)
+    add_billiard(sub)
     return ap
 
 
@@ -757,7 +759,14 @@ def cmd_synth_week(args) -> int:
     return 0
 
 
+def cmd_billiard(args) -> int:
+    from qonaq.billiard.cli import cmd_billiard as run
+
+    return run(args)
+
+
 HANDLERS = {
+    "billiard": cmd_billiard,
     "demo-reel": cmd_demo_reel,
     "synth-week": cmd_synth_week,
     "service": cmd_service,

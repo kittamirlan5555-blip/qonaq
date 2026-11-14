@@ -8,11 +8,12 @@ import numpy as np
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-ZoneType = Literal["table", "entrance", "waiting_area", "service_point", "ignore"]
+ZoneType = Literal["table", "entrance", "waiting_area", "service_point", "billiard_table", "ignore"]
 AnchorStrategy = Literal["bottom_center", "center", "overlap", "hips"]
 
-ZONE_TYPES: tuple[str, ...] = ("table", "entrance", "waiting_area", "service_point", "ignore")
-ID_PREFIX = {"table": "T", "entrance": "E", "waiting_area": "W", "service_point": "S", "ignore": "X"}
+ZONE_TYPES: tuple[str, ...] = ("table", "entrance", "waiting_area", "service_point", "billiard_table", "ignore")
+ID_PREFIX = {"table": "T", "entrance": "E", "waiting_area": "W", "service_point": "S", "billiard_table": "B",
+             "ignore": "X"}
 
 
 def default_anchor(zone_type: str) -> str:

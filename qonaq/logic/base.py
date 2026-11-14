@@ -7,6 +7,23 @@ from typing import Any
 
 
 @dataclass(frozen=True)
+class FeltSignal:
+    """Что видно на сукне бильярдного стола на кадре (B2). Считает видео-слой qonaq/billiard/felt.py.
+
+    motion — мелкие быстрые объекты двигаются внутри сукна (шары), уже после подавления: смены света, теней,
+    крупных объектов через край сукна (рука, человек, кий). None — кадр не годится (свет мигнул, стол закрыт).
+    """
+
+    motion: bool | None
+    intrusion: bool = False  # крупный объект пересекает край сукна (наклонился, проходит мимо, кий)
+    global_change: bool = False  # яркость всего сукна скачком изменилась
+    lamp_on: bool | None = None
+    covered: bool | None = None  # сукно не видно (накрыли/закрыли)
+    balls: int | None = None  # сколько мелких контрастных пятен на сукне (вспомогательно)
+    score: float = 0.0  # площадь «шаровых» пятен движения, в площадях шара
+
+
+@dataclass(frozen=True)
 class ZoneObservation:
     """Что видно в зоне в момент ts (секунды времени сцены).
 
@@ -30,6 +47,8 @@ class ZoneObservation:
     guest_confidence: float | None = None
     # service_point: сотрудник за стойкой (clinic).
     staff_behind_desk: bool | None = None
+    # billiard_table: сигнал с сукна (B2).
+    felt: FeltSignal | None = None
 
 
 @dataclass

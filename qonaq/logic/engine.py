@@ -92,4 +92,8 @@ def create_engine(zones: ZoneSet, site: SiteConfig, pos=None) -> Engine:
         from qonaq.logic.clinic import ClinicEngine
 
         return ClinicEngine(zones, site)
+    if site.profile == "billiard":
+        from qonaq.logic.billiard import BilliardEngine
+
+        return BilliardEngine(zones, site, pos=pos)
     return RestaurantEngine(zones, site, pos=pos)

@@ -119,6 +119,47 @@ class ClinicThresholds(_Model):
     dropout_tolerance_s: float = 5.0
 
 
+class BilliardThresholds(_Model):
+    """Профиль `billiard` (SPRINT3 B2): стол в игре — по движению мелких объектов на сукне, не по людям рядом.
+
+    Эпизод — подряд идущие кадры с движением шаров (разрыв ≤ episode_gap_s). Игра началась — ≥ start_episodes
+    эпизодов за start_window_s; пауза (панель) — нет эпизодов idle_s; сессия кончилась — нет эпизодов pause_max_s
+    (конец — последний эпизод), или лампа погасла / стол накрыт.
+    """
+
+    episode_gap_s: float = 3.0
+    episode_min_s: float = 0.9
+    episode_min_frames: int = 2
+    start_episodes: int = 3  # K
+    start_window_s: float = 300.0  # T
+    idle_s: float = 240.0
+    pause_max_s: float = 600.0  # P: паузы короче не рвут сессию
+    blind_gap_s: float = 15.0  # кадров нет дольше — обрыв камеры, время «замораживается» (как D-035)
+    lamp_window_s: float = 10.0
+    covered_window_s: float = 20.0
+    end_on_lamp_off: bool = True
+    end_on_covered: bool = True
+    tariff_per_hour: float = 2500.0  # ₸/час по умолчанию (B3 — сверка)
+    tariffs: dict[str, float] = Field(default_factory=dict)  # тариф по id стола
+    # Видео-слой (qonaq/billiard/felt.py)
+    felt_width: int = 192  # кроп сукна приводится к этой ширине
+    diff_px: float = 18.0  # порог |разницы| после выравнивания яркости
+    ball_area_min: float = 0.25  # площадь пятна движения в «площадях шара»
+    ball_area_max: float = 8.0
+    ball_diameter_frac: float = 0.022  # диаметр шара / длинная сторона сукна (пул 57 мм / 2,54 м)
+    margin_frac: float = 0.06  # полоса вокруг сукна (борта), доля ширины: пятно, заходящее в неё, — не шар
+    fg_px: float = 25.0  # отличие от фона пустого стола — «объект»
+    bg_rate: float = 0.05  # обновление фона за кадр (2 кадр/с → ~10 с); под объектами — bg_rate_fg
+    bg_rate_fg: float = 0.005
+    global_shift: float = 0.12  # медиана яркости сукна сдвинулась больше чем на 12% — смена света, кадр не считаем
+    lamp_on_luma: float = 60.0  # яркость сукна (0..255) выше — лампа над столом горит (если нет эталона)
+    lamp_ratio: float = 0.55  # или: яркость ≥ доли эталона «лампа горит»
+    covered_felt_frac: float = 0.45  # доля пикселей цвета сукна ниже — стол накрыт/закрыт
+
+    def tariff(self, zone_id: str) -> float:
+        return float(self.tariffs.get(zone_id, self.tariff_per_hour))
+
+
 class RolesConfig(_Model):
     move_threshold: float = 0.6  # смещение якоря за seat_min_s в долях высоты bbox: меньше — «сидит»
     multi_table_count: int = 3
@@ -202,13 +243,14 @@ class HealthSettings(_Model):
 class SiteConfig(_Model):
     site_id: str = "demo"
     name: str = "Демо-объект"
-    profile: Literal["restaurant", "clinic"] = "restaurant"
+    profile: Literal["restaurant", "clinic", "billiard"] = "restaurant"
     process_fps: float = Field(5.0, gt=0, le=30)
     cameras: list[CameraConfig] = Field(default_factory=list)
     detector: DetectorConfig = Field(default_factory=DetectorConfig)
     tracker: TrackerConfig = Field(default_factory=TrackerConfig)
     thresholds: RestaurantThresholds = Field(default_factory=RestaurantThresholds)
     clinic: ClinicThresholds = Field(default_factory=ClinicThresholds)
+    billiard: BilliardThresholds = Field(default_factory=BilliardThresholds)
     alerts: AlertThresholds = Field(default_factory=AlertThresholds)
     roles: RolesConfig = Field(default_factory=RolesConfig)
     business: BusinessConfig = Field(default_factory=BusinessConfig)
