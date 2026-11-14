@@ -151,3 +151,31 @@ def test_coverage_from_heartbeats_and_cli(tmp_path, capsys):
     out = capsys.readouterr().out
     assert rc == 0 and "Стол 4, 21:40–22:40" in out and "Счётчик шёл" in out
     assert (tmp_path / "out" / "reconcile.html").exists()
+
+
+def test_live_journal_over_several_days_is_cut_to_the_day(tmp_path, capsys):
+    """B8: журнал live копится днями; вчерашняя игра не должна попасть в «игру без счётчика» за сегодня."""
+    from qonaq.cli import main
+
+    db = tmp_path / "events.sqlite"
+    st = EventStore(db)
+    st.set_meta(time_base="epoch", profile="billiard")
+    for day in (13, 14):
+        st.add([Event(T("19:00", day) + 60 * k, "", "heartbeat", {"window_s": 60, "up": ["hall_1"]})
+                for k in range(1, 300)])
+    st.add([Event(T("20:00", 13), "B2", "game_started", {"start": T("20:00", 13)}, "hall_1"),
+            Event(T("21:00", 13), "B2", "game_ended", {"start": T("20:00", 13), "end": T("21:00", 13)}, "hall_1"),
+            Event(T("20:00", 14), "B1", "game_started", {"start": T("20:00", 14)}, "hall_1"),
+            Event(T("21:00", 14), "B1", "game_ended", {"start": T("20:00", 14), "end": T("21:00", 14)}, "hall_1")])
+    st.close()
+    csv = tmp_path / "paid.csv"
+    csv.write_text("стол;начало;конец;сумма\nСтол 1;20:00;21:00;3000\n", encoding="utf-8")
+    for extra in (["--date", "2026-11-14"], []):
+        csv2 = csv if extra else tmp_path / "paid_full.csv"
+        if not extra:
+            csv2.write_text("стол;начало;конец;сумма\nСтол 1;2026-11-14 20:00;2026-11-14 21:00;3000\n",
+                            encoding="utf-8")
+        rc = main(["reconcile", "--events", str(db), "--sessions", str(csv2), *extra, "--out", str(tmp_path / "o")])
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert "Стол 2" not in out, out  # игра 13.11 — вне периода сверки

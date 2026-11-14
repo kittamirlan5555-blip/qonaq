@@ -64,6 +64,8 @@ CREATE TABLE IF NOT EXISTS feedback (
 );
 """
 
+RESUME_AFTER_RESTART_S = 900.0  # B8: перезапуск дольше 15 мин — гости за столом, скорее всего, уже другие
+
 SESSION_COLS = (
     "camera_id", "zone_id", "sid", "kind", "seated_ts", "served_ts", "left_ts", "cleaned_ts",
     "response_time_s", "visit_duration_s", "cleanup_time_s", "staff_visits", "guests", "outcome",
@@ -83,6 +85,7 @@ class EventStore:
         self._lock = threading.Lock()
         self._open: dict[tuple[str, str, str], dict[str, Any]] = {}  # незакрытые сессии
         self._dirty_next: set[tuple[str, str, str]] = set()  # следующая посадка — за неубранный стол
+        self._resume: dict[tuple[str, str, str], dict[str, Any]] = {}  # прерваны перезапуском (B8)
 
     def _migrate_sessions(self) -> None:
         """Старые журналы: сессия была уникальна по (камера, стол, sid). После перезапуска службы sid начинаются
@@ -120,6 +123,52 @@ class EventStore:
                 )
                 self._apply_to_session(e)
 
+    def _load_open(self, key: tuple[str, str, str]) -> dict[str, Any] | None:
+        row = self._db.execute("SELECT * FROM sessions WHERE camera_id=? AND zone_id=? AND kind=? AND outcome='open' "
+                               "ORDER BY seated_ts DESC LIMIT 1", key).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        d.pop("id", None)
+        return d
+
+    def close_interrupted(self, reason: str = "restart") -> list[Event]:
+        """B8: при старте live закрыть то, что осталось открытым от прошлого процесса (перезапуск, сбой, питание).
+
+        Столы ресторана: открытая сессия → событие `aborted` в момент последнего события журнала (последний
+        heartbeat — когда система ещё работала). Если после старта тот же стол сразу виден занятым (движок даёт
+        `seated` с `preexisting`) в течение RESUME_AFTER_RESTART_S — сессия продолжается, а не считается дважды.
+        Бильярд: `game_started` без `game_ended` → `game_ended` с `reason=restart` и концом в последний
+        подтверждённый момент этой игры (консервативно: в сверке «играли без счётчика» не больше, чем видели)."""
+        with self._lock:
+            rows = self._db.execute("SELECT camera_id, zone_id FROM sessions WHERE kind='table' AND outcome='open'"
+                                    ).fetchall()
+            last = self._db.execute("SELECT MAX(ts) FROM events").fetchone()[0]
+            games = self._db.execute(
+                "SELECT camera_id, zone_id, ts, type, payload_json FROM events WHERE type IN "
+                "('game_started','game_ended') ORDER BY ts, id").fetchall()
+            zone_last = {(r[0], r[1]): r[2] for r in self._db.execute(
+                "SELECT camera_id, zone_id, MAX(ts) FROM events WHERE zone_id != '' GROUP BY camera_id, zone_id")}
+        out: list[Event] = []
+        if last is None:
+            return out
+        for r in rows:
+            out.append(Event(float(last), r["zone_id"], "aborted", {"reason": reason}, r["camera_id"]))
+        open_games: dict[tuple[str, str], dict[str, Any]] = {}
+        for cam, zone, ts, typ, pj in games:
+            if typ == "game_started":
+                open_games[(cam, zone)] = json.loads(pj) | {"ts": ts}
+            else:
+                open_games.pop((cam, zone), None)
+        for (cam, zone), g in open_games.items():
+            start = float(g.get("start", g["ts"]))
+            end = max(start, float(g.get("detected_ts", start)), float(zone_last.get((cam, zone), start)))
+            out.append(Event(end, zone, "game_ended", {"start": round(start, 3), "end": round(end, 3),
+                                                       "duration_s": round(end - start, 1), "reason": reason,
+                                                       "detected_ts": round(float(last), 3)}, cam))
+        self.add(out)
+        return out
+
     def _save_session(self, s: dict[str, Any]) -> None:
         cols = ",".join(SESSION_COLS)
         ph = ",".join("?" for _ in SESSION_COLS)
@@ -137,7 +186,26 @@ class EventStore:
         if t == "seated_at_dirty_table":
             self._dirty_next.add(key)
             return
+        if t == "aborted":  # B8: служба перезапустилась/пропало питание посреди сессии
+            if s is None:
+                s = self._load_open(key)
+            if s is None:
+                return
+            s["left_ts"] = e.ts
+            s["outcome"] = "aborted"
+            self._save_session(s)
+            self._open.pop(key, None)
+            self._resume[key] = s
+            return
         if t == "seated":
+            prev = self._resume.pop(key, None)
+            if prev is not None and p.get("preexisting") and 0 <= e.ts - prev["left_ts"] <= RESUME_AFTER_RESTART_S:
+                # после перезапуска движок видит занятый стол как «уже сидели» — это та же сессия, продолжаем её
+                prev["outcome"] = "open"
+                prev["left_ts"] = None
+                self._open[key] = prev
+                self._save_session(prev)
+                return
             s = {
                 "camera_id": e.camera_id, "zone_id": e.zone_id, "sid": int(p.get("sid", 0)), "kind": "table",
                 "seated_ts": e.ts, "staff_visits": 0, "guests": p.get("guests"), "outcome": "open",

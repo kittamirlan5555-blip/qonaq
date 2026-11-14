@@ -35,12 +35,17 @@ def sessions_from_events(events: list[dict[str, Any]], end_ts: float | None = No
     """game_started/game_ended → интервалы по столам. Незакрытая сессия — до end_ts (или последнего события)."""
     out: dict[str, list[Interval]] = {}
     open_: dict[tuple[str, str], float] = {}
+    open_det: dict[tuple[str, str], float] = {}
     last = max((e["ts"] for e in events), default=0.0)
     for e in sorted(events, key=lambda e: e["ts"]):
         key = (e.get("camera_id") or "", e["zone_id"])
         p = e.get("payload") or {}
         if e["type"] == "game_started":
+            if key in open_:  # прошлая игра не закрыта (старый журнал, сбой) — до её последнего подтверждения
+                a = open_.pop(key)
+                out.setdefault(e["zone_id"], []).append((a, max(a, open_det.get(key, a))))
             open_[key] = float(p.get("start", e["ts"]))
+            open_det[key] = float(p.get("detected_ts", e["ts"]))
         elif e["type"] == "game_ended":
             open_.pop(key, None)
             out.setdefault(e["zone_id"], []).append((float(p["start"]), float(p["end"])))

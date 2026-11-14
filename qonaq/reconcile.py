@@ -370,6 +370,23 @@ def video_sessions(store, profile: str, offset: float = 0.0) -> dict[str, list[I
     return out
 
 
+def clip(iv: list[Interval], a: float, b: float) -> list[Interval]:
+    return [(max(x, a), min(y, b)) for x, y in iv if min(y, b) > max(x, a)]
+
+
+def period_window(day: date | None, paid: list[Paid], tz: tzinfo, day_start_h: int = 6,
+                  margin_s: float = 3600.0) -> tuple[float, float] | None:
+    """B8: какой отрезок журнала сверять. Журнал live один на объект и копится днями, а CSV учёта — обычно за
+    один день: без окна вчерашние игры попадали в «игру без счётчика». --date → рабочий день (с day_start_h до
+    day_start_h следующего дня); иначе — от первой до последней оплаченной сессии ± margin_s; без CSV — весь журнал."""
+    if day is not None:
+        a = datetime(day.year, day.month, day.day, day_start_h, tzinfo=tz).timestamp()
+        return a, a + 86400.0
+    if paid:
+        return min(p.start for p in paid) - margin_s, max((p.end or p.start) for p in paid) + margin_s
+    return None
+
+
 def coverage_from_store(store, offset: float = 0.0) -> dict[str, list[Interval]]:
     """Когда система реально видела: по событиям heartbeat (live пишет раз в минуту: окно и камеры с кадрами).
     Ключ "*" — хоть одна камера; иначе id камеры. Без heartbeat (прогон файла, старые журналы) — один интервал
@@ -562,6 +579,10 @@ def cmd_reconcile(args) -> int:
     paid, warn = read_paid_csv(args.sessions, day, tz, args.day_start)
     video = video_sessions(store, profile, offset)
     cov = coverage_from_store(store, offset).get("*")
+    win = period_window(day, paid, tz, args.day_start)
+    if win is not None:
+        video = {z: c for z, iv in video.items() if (c := clip(iv, *win))}
+        cov = clip(cov, *win) if cov is not None else [win]
     zone_type = "billiard_table" if profile == "billiard" else "table"
     known = {e["zone_id"] for e in store.events() if e["zone_id"] and e["type"] != "heartbeat"}
     if site is not None:

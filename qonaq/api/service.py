@@ -34,6 +34,11 @@ class LiveService:
         self.store = EventStore(self.run_dir / "events.sqlite")
         kinds = {parse_source(c.source)[0] for c in site.cameras}
         self.time_base = "video" if kinds == {"file"} else "epoch"
+        if self.time_base == "epoch":  # B8: сессии, оборванные прошлым процессом (перезапуск, сбой, питание)
+            closed = self.store.close_interrupted()
+            if closed:
+                log.warning("закрыто оборванных прошлым запуском: %d (столы/игры: %s)", len(closed),
+                            ", ".join(sorted({f"{e.camera_id}/{e.zone_id}" for e in closed})))
         self.alerts = AlertDispatcher(sender if sender is not None else (sender_from_env() if use_env_sender else None),
                                       site_name=site.name if site.alerts.show_site_name else "",
                                       tz=site.business.timezone, min_confidence=site.alerts.min_role_confidence,
