@@ -558,3 +558,15 @@ def test_presence_filter_gap_is_frozen():
     for i in range(10):
         f2.update(150 + i * 0.2, True)
     assert f2.state and f2.duration(152) == pytest.approx(152 - since - 140.2, abs=0.5)
+
+
+def test_blind_gap_is_not_in_response_time():
+    """B8: часы ПК ушли вперёд на час (или камера отвалилась) между посадкой и подходом — время подхода не 3660 с,
+    а то, что система видела; измерение помечено неуверенным."""
+    m = machine()
+    tl = seated(Timeline(m))
+    tl.run(30, guests=G)
+    tl.t += 3600  # скачок времени: наблюдений нет час
+    tl.run(60, guests=G).run(8, guests=G, staff=W)
+    sv = tl.of("served")[0].payload
+    assert sv["blind_s"] >= 3599 and sv["response_time_s"] < 200 and sv["confidence"] == "low"

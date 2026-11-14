@@ -261,8 +261,13 @@ class TableMachine:
             s.visits = 1
             s.low_confidence = s.low_confidence or not ep.has_staff
             ep.emitted = True
-            out.append(self._ev(ep.start, "served", response_time_s=round(ep.start - s.seated_ts, 1),
-                                confidence=conf))
+            # B8: время, когда камера не видела стол (обрыв, скачок часов вперёд), в ожидание не входит — как и в
+            # таймер алерта; такое измерение помечается неуверенным
+            extra = {"blind_s": round(s.blind_s, 1)} if s.blind_s else {}
+            if s.blind_s:
+                conf = "low"
+            out.append(self._ev(ep.start, "served", response_time_s=round(ep.start - s.seated_ts - s.blind_s, 1),
+                                confidence=conf, **extra))
             self._set_state(TableState.SERVED, ep.start, out)
         elif self.state == TableState.SERVED and s is not None:
             if not final:
