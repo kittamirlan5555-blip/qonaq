@@ -121,6 +121,14 @@ python -m qonaq live --site configs/sites/demo_file_as_stream.yaml
 | `python -m qonaq synth` | синтетические ролики по сценариям `configs/synth/*.yaml` + прогон + eval |
 | `python scripts/fetch_datasets.py` → `python -m qonaq data index` | обучающие датасеты, единая схема |
 | `python -m qonaq train roles` / `train tables` | оценка и обучение голов «персонал/гость», «чистый/грязный» |
+| `python -m qonaq setup --nvr-ip <IP>` | установка: найти камеры регистратора, кадры, конфиг, черновики зон |
+| `python -m qonaq service install\|status\|restart\|logs\|uninstall --site <yaml>` | live как служба с автозапуском |
+| `python -m qonaq telegram test [--fake]` / `chat-id` / `examples` | Telegram: проверка, chat id, примеры сообщений |
+| `python -m qonaq report pilot --baseline <журналы> --after <журналы>` | отчёт пилота «как есть / стало» |
+| `python -m qonaq synth-week configs/synth_week/*.yaml` | синтетические недели для отчёта пилота |
+| `python -m qonaq demo-reel` | ролик для продаж 30–45 с (синтетика + реальный CCTV, с блюром) |
+| `python scripts/emulate_cameras.py` | эмулятор регистратора: ролики по RTSP с логином/паролем |
+| `python scripts/bench_detector.py` | recall людей и скорость детектора на размеченных кадрах тёмной камеры |
 
 Общие флаги: `--fps 3` (кадров в секунду), `--model yolox_m --tiles 2` (точнее, но в ~6 раз медленнее),
 `--site configs/sites/x.yaml` (пороги, средний чек), `--max-seconds 30`.
@@ -143,8 +151,15 @@ python -m qonaq live --site configs/sites/demo_file_as_stream.yaml
 3. Скопируйте `configs/sites/clinic_example.yaml` (или `demo_webcam.yaml`), впишите адрес в `source:`.
 4. Сделайте снимок с камеры и разметьте зоны (см. ниже). Запустите `live --site ваш.yaml`.
 
-При обрыве потока система переподключается сама (задержка растёт: 1, 2, 4… до 30 секунд).
-Подробный чек-лист выезда на объект — [docs/INSTALL_ONSITE.md](docs/INSTALL_ONSITE.md).
+Проще: `python -m qonaq setup --nvr-ip <IP>` сам переберёт эти шаблоны по каналам, снимет кадры (с блюром),
+запишет `configs/sites/<код>.yaml` и пароль в `.env` (`QONAQ_NVR_USER` / `QONAQ_NVR_PASSWORD`).
+
+При обрыве потока система переподключается сама (задержка растёт: 1, 2, 4… до 15 секунд); пропавшая камера
+не останавливает остальные. Без камер — эмулятор: `python scripts/emulate_cameras.py` и
+`python -m qonaq live --site configs/sites/rtsp_emulated.yaml`.
+Сценарий пилота от первого звонка до финальной встречи — [docs/PILOT_RUNBOOK.md](docs/PILOT_RUNBOOK.md);
+чек-лист выезда — [docs/INSTALL_ONSITE.md](docs/INSTALL_ONSITE.md); Telegram — [docs/TELEGRAM.md](docs/TELEGRAM.md);
+продажи — [docs/sales/](docs/sales/).
 
 ## Как разметить зоны
 
