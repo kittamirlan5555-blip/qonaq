@@ -97,6 +97,44 @@ def telegram_text(m: dict[str, Any], currency: str = "₸") -> str:
     return "\n".join(lines[:10])
 
 
+def shift_summary_text(m: dict[str, Any], currency: str = "₸", day_label: str = "") -> str:
+    """Сводка смены владельцу заведения в Telegram (S4): человеческими словами, без «медиан» и «p90»."""
+    from qonaq.strings import human_dur, plural, table_label
+
+    r, d, roi, t = m["response"], m["dirty"], m["roi"], m["turnover"]
+    head = f"Qonaq · итоги дня · {m['site']['name']}" + (f" · {day_label}" if day_label else "")
+    lines = [head]
+    if m.get("clinic"):
+        c = m["clinic"]
+        lines += [f"Посетителей дождались приёма: {c['served']}, ушли не дождавшись: {c['left_without_service']}",
+                  f"Ожидание: обычно {dur(c['waits']['median'])}, у худших 10% — дольше {dur(c['waits']['p90'])}"]
+        lines.append("Это оценка по видео без проверки человеком.")
+        return "\n".join(lines)
+    lines.append(f"Посадок за столы: {t['seatings']}")
+    if r["n"]:
+        lines.append(f"Официант подходил обычно за {dur(r['median'])}; у худших 10% столов — дольше {dur(r['p90'])}")
+        if r.get("share_over_threshold") is not None:
+            total = r["n"] + r.get("unserved_over_threshold", 0)
+            over = round(r["share_over_threshold"] * total)
+            lines.append(f"Ждали официанта дольше {human_dur(r['threshold_s'])}: "
+                         f"{plural(over, 'стол', 'стола', 'столов')} из {total} ({pct(r['share_over_threshold'])})")
+    else:
+        lines.append("Подход официанта: за день не измерен (мало посадок или камера не видела)")
+    if m["walkouts"]["n"]:
+        lines.append(f"Ушли, не дождавшись официанта: {m['walkouts']['n']}")
+    if roi["peak_s"] > 0 and roi["excess_dirty_in_peak_s"] > 0:
+        lines.append(f"Неубранные столы в часы пик: лишних {dur(roi['excess_dirty_in_peak_s'])} в сумме")
+    elif d["n"]:
+        lines.append(f"Столы убирали в среднем за {dur(d['mean'])}")
+    loss = roi["loss_kzt"] + roi["walkout_loss_kzt"]
+    if loss:
+        lines.append(f"Оценка упущенной выручки: около {fmt_money(loss, currency)} (только часы пик и ушедшие)")
+    if m["problem_tables"]:
+        lines.append("Чаще всего проблемы: " + ", ".join(table_label(p["zone_id"]) for p in m["problem_tables"][:3]))
+    lines.append("Это оценка по видео без проверки человеком.")
+    return "\n".join(lines)
+
+
 def markdown_report(m: dict[str, Any], currency: str = "₸") -> str:
     r, d, roi, t, v = m["response"], m["dirty"], m["roi"], m["turnover"], m["visit"]
     L = [f"# Отчёт смены — {m['site']['name']}", "",

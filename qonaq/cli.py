@@ -202,6 +202,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--index", default="data/index/tables.csv")
     p.add_argument("--out", default="runs/train")
     p.add_argument("--models", default="models")
+
+    from qonaq.alerts.cli_telegram import add_parser as add_telegram
+
+    add_telegram(sub)
     return ap
 
 
@@ -216,6 +220,7 @@ def main(argv: list[str] | None = None) -> int:
                 stream.reconfigure(encoding="utf-8", errors="replace")
             except (ValueError, OSError):
                 pass
+    logging.getLogger("httpx").setLevel(logging.WARNING)  # не печатать каждый запрос к Telegram
     load_dotenv_if_any(Path.cwd())
     handler = HANDLERS[args.cmd]
     return int(handler(args) or 0)
@@ -621,7 +626,14 @@ def cmd_train(args) -> int:
     return 1
 
 
+def cmd_telegram(args) -> int:
+    from qonaq.alerts.cli_telegram import run
+
+    return run(args)
+
+
 HANDLERS = {
+    "telegram": cmd_telegram,
     "health": cmd_health,
     "calibrate": cmd_calibrate,
     "record": cmd_record,

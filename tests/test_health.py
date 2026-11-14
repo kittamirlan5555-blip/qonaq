@@ -185,7 +185,7 @@ def test_dispatcher_holds_back_unconfident(tmp_path):
     recs = d.handle([ok, weak])
     d.close(drain_s=2)
     assert [r.confident for r in recs] == [True, False]
-    assert len(sink.sent) == 1 and "T1" in sink.sent[0][0] and sink.sent[0][1] == recs[0].alert_id
+    assert len(sink.sent) == 1 and "Стол 1" in sink.sent[0][0] and sink.sent[0][1] == recs[0].alert_id
     assert d.held_back == 1 and len(d.feed) == 2  # неуверенный — в панели/отчёте
     rows = {r["zone_id"]: r for r in store.alerts_sent()}
     assert rows["T1"]["confident"] == 1 and rows["T1"]["sent"] == 1

@@ -58,7 +58,7 @@ class FrameSampler:
 
 
 def summary_text(site_name: str, status: dict[str, Any], events: list[dict], alerts: list[dict] | None = None,
-                 feedback: list[dict] | None = None) -> str:
+                 feedback: list[dict] | None = None, perf: dict[str, Any] | None = None) -> str:
     seated = sum(1 for e in events if e["type"] == "seated")
     served = sum(1 for e in events if e["type"] == "served")
     left = sum(1 for e in events if e["type"] in ("left", "walkout_before_service"))
@@ -73,11 +73,20 @@ def summary_text(site_name: str, status: dict[str, Any], events: list[dict], ale
         lines.append(f"Отметок «неверно» под алертами: {len(feedback)}")
     for i in status.get("issues", [])[:10]:
         lines.append(f"• {i['camera_id']}: {i['message']}")
+    for cid, c in (status.get("cameras") or {}).items():
+        if c.get("outages"):
+            lines.append(f"• {cid}: обрывов связи {c['outages']}, без картинки всего {c['down_s_total'] / 60:.0f} мин")
+    if perf:
+        cams = perf.get("cameras") or {}
+        fps = ", ".join(f"{k} {v.get('fps', 0):.1f}" for k, v in cams.items())
+        lines.append(f"Нагрузка: CPU {perf.get('cpu_pct', 0):.0f}% (100% = одно ядро), память "
+                     f"{perf.get('rss_mb') or 0:.0f} МБ; кадр/с по камерам: {fps}")
     lines.append("Ниже — кадры (лица размыты) для выборочной проверки: совпадают ли подписи с тем, что видно?")
     return "\n".join(lines)
 
 
-def build_daily(run_dir: Path, site_name: str, status: dict[str, Any], frames: list[tuple[bytes, str]]) -> dict:
+def build_daily(run_dir: Path, site_name: str, status: dict[str, Any], frames: list[tuple[bytes, str]],
+                perf: dict[str, Any] | None = None) -> dict:
     from qonaq.events.store import EventStore
 
     store = EventStore(run_dir / "events.sqlite")
@@ -87,7 +96,7 @@ def build_daily(run_dir: Path, site_name: str, status: dict[str, Any], frames: l
         fb = store.feedback()
     finally:
         store.close()
-    text = summary_text(site_name, status, events, alerts, fb)
+    text = summary_text(site_name, status, events, alerts, fb, perf)
     out = run_dir / "daily"
     out.mkdir(exist_ok=True)
     stamp = time.strftime("%Y%m%d_%H%M")

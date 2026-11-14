@@ -46,7 +46,10 @@ def wait_for(cond, timeout=3.0):
 
 
 def test_alert_text_is_russian_and_readable():
-    assert format_alert(alert(), "Кафе", "Стол 4") == "⚠ Кафе: Стол 4: гости ждут официанта 03:05"
+    assert format_alert(alert(), "", "Стол 4") == "⚠ Стол 4: гости ждут официанта уже 3 мин"
+    wall = 1_763_100_000.0  # 14.11.2025 06:00 UTC = 11:00 в Астане (UTC+5)
+    assert format_alert(alert(zone="T04"), "Кафе", "T04", wall, "Asia/Almaty") == (
+        "⚠ 11:00 · Стол 4: гости ждут официанта уже 3 мин (сели в 10:56)\nКафе")
 
 
 def test_alerts_without_token_go_to_log_and_feed(caplog):

@@ -35,7 +35,8 @@ class LiveService:
         kinds = {parse_source(c.source)[0] for c in site.cameras}
         self.time_base = "video" if kinds == {"file"} else "epoch"
         self.alerts = AlertDispatcher(sender if sender is not None else (sender_from_env() if use_env_sender else None),
-                                      site_name=site.name, min_confidence=site.alerts.min_role_confidence,
+                                      site_name=site.name if site.alerts.show_site_name else "",
+                                      tz=site.business.timezone, min_confidence=site.alerts.min_role_confidence,
                                       confident_only=site.alerts.confident_only, store=self.store)
         # W7: монитор здоровья + сводка владельцу системы (отдельный чат)
         from qonaq.health.daily import FrameSampler
@@ -53,6 +54,8 @@ class LiveService:
         self.owner = sender_from_env(site.health.owner_chat_env) if use_env_sender else None
         self._issue_sent: dict[tuple, float] = {}
         self._daily_day: str | None = None
+        self._shift_day: str | None = None
+        self.venue = sender_from_env(site.alerts.venue_chat_env) if use_env_sender else None
         self._health_thread: threading.Thread | None = None
         self._feedback = None
         self.writer = AsyncEventWriter(self.store)
@@ -160,15 +163,43 @@ class LiveService:
                     except Exception as e:  # noqa: BLE001
                         log.warning("сообщение владельцу не отправлено: %s", e)
         lt = self._local_now()
+        if due(lt, self.site.alerts.shift_summary_at, self._shift_day):
+            self._shift_day = time.strftime("%Y-%m-%d", lt)
+            try:
+                text = self.shift_summary(lt)
+                (self.run_dir / f"shift_{self._shift_day}.txt").write_text(text, encoding="utf-8")
+                if self.venue is not None:
+                    self.venue.send(text)
+            except Exception as e:  # noqa: BLE001
+                log.warning("сводка смены не отправлена: %s", e)
         if due(lt, self.site.health.daily_at, self._daily_day):
             self._daily_day = time.strftime("%Y-%m-%d", lt)
-            daily = build_daily(self.run_dir, self.site.name, st, self.sampler.pick(self.site.health.daily_frames))
+            daily = build_daily(self.run_dir, self.site.name, st, self.sampler.pick(self.site.health.daily_frames),
+                                self.perf)
             if self.owner is not None:
                 try:
                     send_daily(self.owner, daily)
                 except Exception as e:  # noqa: BLE001
                     log.warning("ежедневная сводка не отправлена: %s", e)
         return st
+
+    def shift_summary(self, lt=None) -> str:
+        """Сводка смены владельцу заведения (S4): события с местной полуночи (живой поток) или весь прогон."""
+        from qonaq.metrics.compute import compute_metrics
+        from qonaq.metrics.period import slice_store
+        from qonaq.metrics.report import shift_summary_text
+
+        lt = lt or self._local_now()
+        now = time.time()
+        if self.time_base == "epoch":
+            since_midnight = lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec
+            store = slice_store(self.store, now - since_midnight, now)
+        else:
+            store = self.store
+        m = compute_metrics(store, self.site)
+        months = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября",
+                  "октября", "ноября", "декабря"]
+        return shift_summary_text(m, self.site.business.currency, f"{lt.tm_mday} {months[lt.tm_mon - 1]}")
 
     def perf_tick(self) -> dict[str, Any]:
         """Строка live-статистики (S1): fps и задержка по камерам за окно, переподключения, CPU, RSS."""

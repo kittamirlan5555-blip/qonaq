@@ -90,6 +90,9 @@ class AlertThresholds(_Model):
     # Неуверенные — в панель и отчёт, но не в Telegram. «Лучше пропустить алерт, чем отправить ложный».
     min_role_confidence: float = 0.6
     confident_only: bool = True
+    show_site_name: bool = False  # S4: название заведения второй строкой (если у администратора их несколько)
+    shift_summary_at: str = "23:30"  # S4: сводка смены владельцу заведения (TELEGRAM_VENUE_CHAT_ID); "" — нет
+    venue_chat_env: str = "TELEGRAM_VENUE_CHAT_ID"
     no_waiter_s: float = 180.0
     dirty_table_s: float = 300.0
     long_service_without_visit_s: float = 900.0

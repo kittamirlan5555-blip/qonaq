@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from qonaq.logic.base import Event
-from qonaq.strings import alert_text
+from qonaq.strings import alert_message, t
 
 log = logging.getLogger("qonaq.alerts")
 
@@ -25,11 +25,20 @@ class Sender(Protocol):
     def send(self, text: str) -> None: ...  # бросает исключение при неудаче
 
 
+DEFAULT_API_BASE = "https://api.telegram.org"
+
+
+def api_base() -> str:
+    """Адрес Bot API: TELEGRAM_API_BASE (локальный фейковый сервер для проверки, свой прокси) или официальный."""
+    return (os.environ.get("TELEGRAM_API_BASE") or DEFAULT_API_BASE).rstrip("/")
+
+
 class TelegramSender:
-    def __init__(self, token: str, chat_id: str, client=None, timeout: float = 10.0):
+    def __init__(self, token: str, chat_id: str, client=None, timeout: float = 10.0, base_url: str | None = None):
         import httpx
 
-        self._base = f"https://api.telegram.org/bot{token}/"
+        self.base_url = (base_url or api_base()).rstrip("/")
+        self._base = f"{self.base_url}/bot{token}/"
         self._url = self._base + "sendMessage"
         self.chat_id = chat_id
         self._client = client or httpx.Client(timeout=timeout)
@@ -43,11 +52,21 @@ class TelegramSender:
         if r.status_code != 200:
             raise RuntimeError(f"Telegram API {r.status_code}: {r.text[:200]}")
 
+    def send_photo(self, data: bytes, caption: str = "") -> None:
+        """Один JPEG с подписью (sendPhoto)."""
+        r = self._client.post(self._base + "sendPhoto", data={"chat_id": self.chat_id, "caption": caption[:1000]},
+                              files={"photo": ("frame.jpg", data, "image/jpeg")})
+        if r.status_code != 200:
+            raise RuntimeError(f"Telegram API {r.status_code}: {r.text[:200]}")
+
     def send_photos(self, photos: list[tuple[bytes, str]]) -> None:
-        """До 10 JPEG с подписями одним альбомом (sendMediaGroup)."""
+        """До 10 JPEG с подписями одним альбомом (sendMediaGroup); один кадр — sendPhoto."""
         import json as _json
 
         if not photos:
+            return
+        if len(photos) == 1:
+            self.send_photo(*photos[0])
             return
         media, files = [], {}
         for i, (data, caption) in enumerate(photos[:10]):
@@ -134,9 +153,13 @@ def alert_seconds(payload: dict[str, Any]) -> float:
     return 0.0
 
 
-def format_alert(e: Event, site_name: str = "", zone_title: str | None = None) -> str:
-    text = alert_text(e.payload.get("kind", ""), zone_title or e.zone_id, alert_seconds(e.payload))
-    return f"⚠ {site_name}: {text}" if site_name else f"⚠ {text}"
+def format_alert(e: Event, site_name: str = "", zone_title: str | None = None, wall: float | None = None,
+                 tz: str | None = None) -> str:
+    """Текст алерта администратору (S4): время, номер стола, что случилось — без технических слов.
+
+    site_name добавляется второй строкой только если задан (у одного администратора несколько заведений)."""
+    text = alert_message(e.payload.get("kind", ""), zone_title or e.zone_id, alert_seconds(e.payload), wall, tz)
+    return f"{text}\n{site_name}" if site_name else text
 
 
 CONFIDENCE_KINDS = ("no_waiter", "long_service_without_visit", "dirty_table")
@@ -181,8 +204,16 @@ class AlertRecord:
 class AlertDispatcher:
     def __init__(self, sender: Sender | None = None, site_name: str = "", max_queue: int = 500,
                  retry_base_s: float = 2.0, retry_max_s: float = 120.0, sleep=None,
-                 min_confidence: float = 0.6, confident_only: bool = True, store=None):
+                 min_confidence: float = 0.6, confident_only: bool = True, store=None,
+                 tz: str | None = None, late_after_s: float = 120.0, max_age_s: float = 1800.0, clock=time.time):
         self.sender = sender
+        self.tz = tz
+        # Очередь при обрыве сети (S4): позже late_after_s — с пометкой «с опозданием»; старше max_age_s — не шлём
+        # (через полчаса «гости ждут» уже бесполезно и только раздражает), но пишем в журнал.
+        self.late_after_s = late_after_s
+        self.max_age_s = max_age_s
+        self.expired = 0
+        self._clock = clock
         self.min_confidence = min_confidence
         self.confident_only = confident_only
         self.store = store  # EventStore: журнал алертов (alerts_sent) для отчёта и обратной связи
@@ -214,9 +245,10 @@ class AlertDispatcher:
                 continue
             self._seen.add(key)
             conf = is_confident(e, self.min_confidence)
+            wall = self._clock()
             rec = AlertRecord(e.ts, e.camera_id, e.zone_id, e.payload.get("kind", ""),
-                              format_alert(e, self.site_name, (zone_titles or {}).get(e.zone_id)),
-                              confident=conf, alert_id=alert_id(e))
+                              format_alert(e, self.site_name, (zone_titles or {}).get(e.zone_id), wall, self.tz),
+                              confident=conf, alert_id=alert_id(e), wall=wall)
             self.feed.append(rec)
             out.append(rec)
             to_tg = conf or not self.confident_only
@@ -248,11 +280,17 @@ class AlertDispatcher:
                 continue
             delay = self._retry_base
             while not self._stop.is_set():
+                age = self._clock() - rec.wall
+                if age > self.max_age_s:
+                    self.expired += 1
+                    log.warning("алерт устарел (%.0f мин без связи) — не отправлен: %s", age / 60, rec.text)
+                    break
+                text = rec.text if age <= self.late_after_s else f"{rec.text}\n{t('tg.late')}"
                 try:
                     try:
-                        self.sender.send(rec.text, feedback_id=rec.alert_id)
+                        self.sender.send(text, feedback_id=rec.alert_id)
                     except TypeError:  # отправитель без кнопки обратной связи
-                        self.sender.send(rec.text)
+                        self.sender.send(text)
                     rec.sent = True
                     self.sent_count += 1
                     self._log(rec)
