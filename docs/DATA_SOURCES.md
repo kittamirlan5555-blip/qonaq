@@ -50,3 +50,26 @@ of-a-snooker-footage (MIT, трансляция снукера, ролики н�
 FedericoPivotto). Записей «стол пустой», «люди рядом без игры», «зал бильярдной целиком» не нашлось ни одной.
 
 Демо-ролик бильярда (B6) — **процедурная синтетика** (`qonaq/billiard/synth.py`), чужих кадров в нём нет.
+
+## Трансляции баров и ресторанов (16.11.2026)
+
+Публичные круглосуточные трансляции на YouTube, которые ведут **сами заведения** (поиск через `yt-dlp ytsearch`:
+«bar cam live», «restaurant live cam», «patio cam live», «pub live webcam», «beach bar live cam»; из ~25 трансляций
+в эфире отобраны те, где камера смотрит на столы с гостями и видны официанты/бармены). Пишутся
+`python scripts/record_live_cams.py` — по 1 часу в 19:00–20:00 по местному времени заведения (ужин), 1080p, без звука,
+в `data/videos/live/`. **Только для внутреннего тестирования:** не коммитить, не публиковать, клиентам не показывать;
+кадры в отчётах — только с блюром лиц. Права на видео — у заведений.
+
+| Файл (префикс) | Заведение, город | Канал (ведёт заведение) | Трансляция | Пояс | Что в кадре |
+|---|---|---|---|---|---|
+| `elbo_room_patio_fort_lauderdale` | Elbo Room (Las Olas), Fort Lauderdale, FL, США | Elbo Room (Home of ElboTV) | https://www.youtube.com/watch?v=bM0GplM_vPY | UTC−5 | патио: столики с гостями, сверху-сбоку |
+| `elbo_room_bar_fort_lauderdale` | Elbo Room, Fort Lauderdale | Elbo Room (Home of ElboTV) | https://www.youtube.com/watch?v=wVNt3l657X0 | UTC−5 | барная стойка + столики у окон, бармены |
+| `hogs_breath_outside_key_west` | Hog's Breath Saloon, Key West, FL | Hogs Breath Saloon Key West | https://www.youtube.com/watch?v=thzfsD7VDFg | UTC−5 | двор: обеденные столы сверху, официанты |
+| `hogs_breath_minibar_key_west` | Hog's Breath Saloon, Key West | Hogs Breath Saloon Key West | https://www.youtube.com/watch?v=S605ycm0Vlk | UTC−5 | мини-бар и столы, плотная толпа (рыбий глаз) |
+| `beach_bar_st_john_usvi` | The Beach Bar, Cruz Bay, St. John, USVI | St. John USVI (камера с логотипом бара, там же его календарь концертов) | https://www.youtube.com/watch?v=2wqpy036z24 | UTC−4 | веранда со столами и стойкой |
+| `windmill_bar_st_john_usvi` | The Windmill Bar, St. John, USVI | The Windmill Bar | https://www.youtube.com/watch?v=d-drfinzIWU | UTC−4 | терраса со столами на холме |
+
+Отброшены: уличные камеры сторонних каналов (EarthCam, Teleport, «Real Samui Webcam» — улица, а не зал), Sloppy
+Joe's (фасад), трансляции музыкантов (Two Friends — сцена крупно), Café del Mar (закат), кухня/прилавок
+в Давао (сторонний канал, ночь по местному времени). Ссылка на трансляцию и время начала каждой записи — в
+`data/videos/live/*.json` и `record.log`.
