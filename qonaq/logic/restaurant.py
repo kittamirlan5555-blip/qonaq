@@ -33,6 +33,7 @@ class _Episode:
     start: float
     last_seen: float
     first_seen: dict[int, float] = field(default_factory=dict)  # id -> когда появился
+    seen: dict[int, tuple[float, float]] = field(default_factory=dict)  # id -> (первый, последний раз)
     has_staff: bool = False
     max_single: float = 0.0  # самое долгое пребывание одного id
     confirmed: bool = False  # визит уже засчитан (для подтверждённого персонала — сразу)
@@ -62,6 +63,7 @@ class _Session:
     conf_sum: float = 0.0  # W8: накопленная уверенность ролей гостей за сессию
     conf_n: int = 0
     blind_s: float = 0.0  # S1: сколько секунд сессии камера не видела (обрыв) — не входит в таймеры алертов
+    occ_seen: bool = False  # за сессию видели «сидящих за столом» (гости/сидящие неизвестные) — занятость по ним
 
     def alert_conf(self) -> dict[str, Any]:
         """Поля уверенности для алерта (W8): гости подтверждены ролью и средняя уверенность ролей."""
@@ -91,6 +93,14 @@ class TableMachine:
         w, on, off = self.th.dropout_tolerance_s, self.th.presence_on_ratio, self.th.presence_off_ratio
         self._any = PresenceFilter(w, on, off)  # гости + неизвестные (не персонал)
         self._guest = PresenceFilter(w, on, off)  # только подтверждённые гости
+        # «Сидящие за столом» (постановка 15.11): гости + сидящие неизвестные + тот, кто встал на место только что
+        # пропавшего сидящего (это он же со сменой id). Визит персонала — только сверх них.
+        self._occ = PresenceFilter(w, on, off)
+        self._occupants: set[int] = set()
+        self._fillers: set[int] = set()
+        self._vacancies: list[tuple[float, int]] = []  # (когда, id) — сидящий пропал из зоны
+        self._first_seen: dict[int, float] = {}
+        self._sitting_since: dict[int, float] = {}
         self._first_ts: float | None = None
         self._ts = 0.0
         self._session: _Session | None = None
@@ -105,6 +115,7 @@ class TableMachine:
         self._n_guest = 0
         self._n_unknown = 0
         self._n_staff = 0
+        self._posture_known = False
 
     # ------------------------------------------------------------------ helpers
     def _ev(self, ts: float, type_: str, **payload: Any) -> Event:
@@ -122,9 +133,9 @@ class TableMachine:
 
     def _occupancy(self) -> PresenceFilter:
         s = self._session
-        if s is not None and (s.uses_any or not s.guest_confirmed):
-            return self._any
-        return self._guest
+        if s is not None and not s.occ_seen:
+            return self._any  # сели «неизвестные стоя» (бар) — сидящих не было, занятость по всем не-персоналу
+        return self._occ
 
     def _absent_since(self, ts: float) -> float | None:
         """С какого момента гостей нет за столом в текущей сессии; None — гости на месте.
@@ -145,6 +156,7 @@ class TableMachine:
         а фильтры присутствия — считать его ни присутствием, ни отсутствием (иначе «ушли» после каждого обрыва)."""
         self._any.on_gap(a, b)
         self._guest.on_gap(a, b)
+        self._occ.on_gap(a, b)
         s = self._session
         if s is not None:
             s.blind_s += b - a
@@ -168,19 +180,26 @@ class TableMachine:
         guests, staff = set(obs.guest_tracks), set(obs.staff_tracks)
         unknown = set(obs.unknown_tracks) - guests - staff
         self._n_guest, self._n_unknown, self._n_staff = len(guests), len(unknown), len(staff)
+        standing = None if obs.standing_tracks is None else set(obs.standing_tracks)
+        self._posture_known = standing is not None
+        occupants = self._update_occupants(ts, guests, unknown, standing)
         self._any.update(ts, bool(guests or unknown))
         self._guest.update(ts, bool(guests))
+        self._occ.update(ts, bool(occupants))
         if self._session is not None:
             self._session.max_guests = max(self._session.max_guests, len(guests))
             if self._guest.state:
                 self._session.guest_confirmed = True
+            if self._occ.state:
+                self._session.occ_seen = True
             if obs.guest_confidence is not None and guests:
                 self._session.conf_sum += float(obs.guest_confidence)
                 self._session.conf_n += 1
 
-        # Кандидаты в «визит персонала» среди неизвестных — только стоящие (если признак доступен).
-        visitors = unknown if obs.standing_tracks is None else unknown & set(obs.standing_tracks)
-        self._update_episode(ts, guests, staff, visitors, out)
+        # Кандидаты в «визит персонала» среди неизвестных — только стоящие (если признак доступен) и не из сидящих
+        # за столом (гость, вставший из-за стола или сменивший id, — не визит).
+        visitors = (unknown if standing is None else unknown & standing) - occupants
+        self._update_episode(ts, guests | occupants, staff, visitors, out)
 
         if self.state == TableState.FREE:
             self._try_seat(ts, out, dirty=False)
@@ -193,6 +212,54 @@ class TableMachine:
         self._check_pos(ts, out)
         return out
 
+    # ------------------------------------------------------------------ occupants
+    def _update_occupants(self, ts: float, guests: set[int], unknown: set[int], standing: set[int] | None) -> set[int]:
+        """Кто «сидит за столом»: гости; неизвестные, сидящие не меньше `occupant_sit_s` (официанты не садятся);
+        неизвестный, вставший на место пропавшего сидящего за `occupant_fill_gap_s` (трекер сменил id прикрытому
+        гостю), и сидевший, который встал (уходит). Визит персонала — только сверх них: так стоящая «рамка» гостя
+        с высокой камеры или его новый id после перекрытия не превращаются в «официант стоял у стола 60 с»."""
+        th = self.th
+        present = guests | unknown
+        for tid in present:
+            self._first_seen.setdefault(tid, ts)
+        # ушедший из зоны теряет статус «за столом»: вернувшись стоя, он снова кандидат в визит, пока не сядет
+        self._fillers &= unknown
+        for tid in [t for t in self._sitting_since if t not in unknown]:
+            del self._sitting_since[tid]
+        if standing is None:  # поза неизвестна — как раньше: «за столом» только гости, неизвестные — кандидаты в визит
+            self._occupants = set(guests)
+            return self._occupants
+        else:
+            for tid in unknown - standing:
+                self._sitting_since.setdefault(tid, ts)
+            for tid in list(self._sitting_since):
+                if tid not in unknown or tid in standing:
+                    del self._sitting_since[tid]
+            sitting = {t for t, t0 in self._sitting_since.items() if ts - t0 >= th.occupant_sit_s}
+        if self._session is None:
+            self._fillers.clear()
+            self._vacancies.clear()
+            occ = guests | sitting
+        else:
+            gone = self._occupants - present
+            self._vacancies += [(ts, t) for t in gone]
+            back = present & {t for v, t in self._vacancies if ts - v <= th.occupant_fill_gap_s}
+            self._vacancies = [(v, t) for v, t in self._vacancies
+                               if ts - v <= th.occupant_fill_gap_s and t not in back]
+            # встал — всё ещё «за столом»; пропал на секунды и вернулся тем же id — тоже
+            self._fillers = (self._fillers | (self._occupants & unknown) | (back & unknown)) & unknown
+            for tid in sorted(unknown - sitting - self._fillers - self._occupants, key=lambda t: -self._first_seen[t]):
+                if not self._vacancies:
+                    break
+                if self._first_seen[tid] >= self._vacancies[0][0] - 1e-6:
+                    self._fillers.add(tid)
+                    self._vacancies.pop(0)
+            occ = guests | sitting | self._fillers
+        self._occupants = occ
+        if len(self._first_seen) > 500:
+            self._first_seen = {t: v for t, v in self._first_seen.items() if t in present}
+        return occ
+
     # ------------------------------------------------------------------ visits
     def _update_episode(self, ts: float, guests: set[int], staff: set[int], unknown: set[int],
                         out: list[Event]) -> None:
@@ -202,18 +269,27 @@ class TableMachine:
             return
         ep = self._episode
         if ep is not None:
-            # Неизвестный, которого роли признали гостем, — не визит персонала.
+            # Неизвестный, которого роли признали гостем (или он сел за стол), — не визит персонала: убираем его
+            # из эпизода целиком, начало и длительность — по оставшимся.
+            removed = False
             for tid in list(ep.first_seen):
                 if tid in guests:
                     del ep.first_seen[tid]
+                    ep.seen.pop(tid, None)
+                    removed = True
             if not ep.first_seen and not ep.confirmed:
                 ep = self._episode = None
+            elif removed and not ep.confirmed and ep.seen:
+                ep.start = min(a for a, _ in ep.seen.values())
+                ep.last_seen = max(b for _, b in ep.seen.values())
+                ep.max_single = max(b - a for a, b in ep.seen.values())
         visitors = staff | unknown
         if visitors:
             if ep is None:
                 ep = self._episode = _Episode(start=ts, last_seen=ts)
             for tid in visitors:
                 ep.first_seen.setdefault(tid, ts)
+                ep.seen[tid] = (ep.seen[tid][0] if tid in ep.seen else ts, ts)
                 ep.max_single = max(ep.max_single, ts - ep.first_seen[tid])
             ep.last_seen = ts
             ep.has_staff = ep.has_staff or bool(staff)
@@ -301,6 +377,9 @@ class TableMachine:
             return False
         by_role = self._guest.state or self._n_guest > 0
         if not by_role and dur < th.seat_min_s * th.seat_unknown_factor:
+            return False
+        if not by_role and self._posture_known and not (self._occ.state and self._occ.duration(ts) >= th.seat_min_s):
+            # Постановка 15.11: люди ходят у стола (накрывают, убирают) и не садятся — это не посадка.
             return False
         seated_ts = self._any.since if self._any.since is not None else ts
         seated_ts = max(seated_ts, self._left_ts if (dirty and self._left_ts is not None) else self.state_since)

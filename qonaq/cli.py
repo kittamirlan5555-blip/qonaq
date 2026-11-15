@@ -27,6 +27,7 @@ def _site(args) -> SiteConfig:
     site = load_site(args.site) if getattr(args, "site", None) else SiteConfig()
     if getattr(args, "fps", None):
         site.process_fps = args.fps
+        site.fps_auto = False
     d = site.detector
     if getattr(args, "backend", None):
         d.backend = args.backend
@@ -178,6 +179,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--gt", help="разметка (по умолчанию data/gt/<имя>.yaml)")
     _add_common(p)
 
+    rp = sub.add_parser("replay", help="запись-повтор: детекции + гистограммы торса без кадров (регрессионные тесты)")
+    r = rp.add_subparsers(dest="rp_cmd", required=True)
+    p = r.add_parser("record", help="видео -> файл повтора .jsonl.gz (детектор с частотой кадров объекта)")
+    p.add_argument("video")
+    p.add_argument("--out", required=True)
+    _add_common(p)
+    p = r.add_parser("run", help="прогон логики по повтору (без видео) + сверка с разметкой")
+    p.add_argument("replay")
+    p.add_argument("--zones", required=True)
+    p.add_argument("--gt", help="разметка YAML (время — от начала записи)")
+    p.add_argument("--start", type=float, default=0.0, help="начать с секунды N (вырезка); время сдвигается на N")
+    _add_common(p)
+
     cp = sub.add_parser("calibrate", help="калибровка «персонал/гость» под зал: collect | review | train | promote | "
                                           "rollback | status | curve (W6)")
     c = cp.add_subparsers(dest="cal_cmd", required=True)
@@ -194,6 +208,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = c.add_parser("train", help="новая голова зала: общие датасеты + кропы зала; «было → стало»")
     p.add_argument("--site-id", required=True)
     p.add_argument("--with-general", action="store_true", help="подмешать общие датасеты (по умолчанию нет, D-022)")
+    p.add_argument("--split", choices=["time", "tracks"], default="time",
+                   help="проверка: time — кропы после границы по времени (по умолчанию); tracks — случайные треки "
+                        "(завышает цифру: те же люди в обучении и проверке)")
+    p.add_argument("--test-share", type=float, default=0.3, help="доля размеченных кропов на проверку")
     p = c.add_parser("promote", help="включить версию головы (по умолчанию последнюю)")
     p.add_argument("--site-id", required=True)
     p.add_argument("--version", type=int)
@@ -203,6 +221,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--site-id", required=True)
     p = c.add_parser("curve", help="кривая «n размеченных кропов -> точность» на отложенных залах W2")
     p.add_argument("--ns", default="0,25,50,100,300")
+    p.add_argument("--split", choices=["time", "blocks"], default="time",
+                   help="time — калибровка из первой половины записи, тест — после зазора (по умолчанию); blocks — "
+                        "старый способ: случайные блоки (завышает)")
 
     p = sub.add_parser("health", help="здоровье прогона/живой системы: проблемы, сводка (W7)")
     p.add_argument("run_dir")
@@ -544,6 +565,37 @@ def cmd_record(args) -> int:
     return 0
 
 
+def cmd_replay(args) -> int:
+    from qonaq.detect import replay
+
+    site = _site(args)
+    if args.rp_cmd == "record":
+        info = replay.record(args.video, site, args.out, max_seconds=args.max_seconds)
+        print(f"Повтор: {info['path']} — {info['frames']} кадров, {info['people']} людей, {info['bytes'] // 1024} КБ")
+        return 0
+    if not site.cameras:
+        from qonaq.config import CameraConfig
+
+        site.cameras = [CameraConfig(id="replay", source="replay")]
+    events = replay.run(args.replay, site, zones_path=args.zones, start_s=args.start)
+    shown = ("seated", "served", "staff_visit", "left", "cleaned", "walkout_before_service", "alert")
+    for e in events:
+        if e.type in shown:
+            p = e.payload
+            extra = p.get("kind") or p.get("response_time_s") or p.get("duration_s") or ""
+            lag = p.get("detected_ts", e.ts) - e.ts
+            print(f"  {e.ts + args.start:7.1f} (+{lag:4.1f}) {e.zone_id} {e.type} {extra}")
+    if args.gt:
+        from qonaq.evalgt import Ev, evaluate, format_table, load_gt
+
+        gt = [Ev(g.t - args.start, g.zone, g.type) for g in load_gt(args.gt) if g.t >= args.start]
+        from qonaq.evalgt import CORE_TYPES
+
+        sysev = [Ev(e.ts, e.zone_id, e.type) for e in events if e.type in CORE_TYPES]
+        print(format_table(evaluate(gt, sysev)))
+    return 0
+
+
 def cmd_staged(args) -> int:
     from qonaq.staged import staged_check
 
@@ -551,6 +603,7 @@ def cmd_staged(args) -> int:
         base = _site(args)  # флаги --model/--fps/... поверх configs/sites/staged.yaml
         if args.fps:
             site.process_fps = base.process_fps
+            site.fps_auto = False
         for k in ("backend", "onnx_model", "onnx_tiles", "model", "device", "conf", "cache_dir"):
             if getattr(args, {"onnx_model": "model", "onnx_tiles": "tiles", "cache_dir": "det_cache"}.get(k, k), None):
                 setattr(site.detector, k, getattr(base.detector, k))
@@ -582,7 +635,8 @@ def cmd_calibrate(args) -> int:
     if args.cal_cmd == "train":
         from qonaq.calib.train import format_report, train_site
 
-        print(format_report(train_site(sid, use_general_data=args.with_general)))
+        print(format_report(train_site(sid, use_general_data=args.with_general, split=args.split,
+                                       test_share=args.test_share)))
         return 0
     if args.cal_cmd == "promote":
         v = store.promote(sid, args.version)
@@ -602,7 +656,7 @@ def cmd_calibrate(args) -> int:
         from qonaq.train.featcache import extract
 
         f = {"mnv2": extract(Path("data/index/roles.csv"), "mnv2", Path("data/features"))}
-        c = calibration_curve(f, ns=tuple(int(x) for x in args.ns.split(",")))
+        c = calibration_curve(f, ns=tuple(int(x) for x in args.ns.split(",")), split=args.split)
         out = Path("runs/train")
         out.mkdir(parents=True, exist_ok=True)
         (out / "calib_curve.json").write_text(json.dumps(c, indent=1, default=float), encoding="utf-8")
@@ -850,6 +904,7 @@ HANDLERS = {
     "calibrate": cmd_calibrate,
     "record": cmd_record,
     "staged-check": cmd_staged,
+    "replay": cmd_replay,
     "synth": cmd_synth,
     "train": cmd_train,
     "data": cmd_data,

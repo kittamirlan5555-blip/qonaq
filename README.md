@@ -126,6 +126,8 @@ python -m qonaq live --site configs/sites/demo_reel_as_stream.yaml
 | `python scripts/run_all.py` | всё сразу на всех видео из `data/videos/` |
 | `python -m qonaq record --source webcam:0 --seconds 660` | запись вебкамеры для постановочного теста |
 | `python -m qonaq staged-check data/videos/staged.mp4` | постановочный тест одной строкой (docs/STAGED_TEST.md) |
+| `python -m qonaq replay record <видео> --out x.jsonl.gz` / `replay run x.jsonl.gz --zones … --gt …` | запись-повтор: детекции + гистограммы торса без кадров; прогон логики без видео за секунды (регрессионные тесты, D-043) |
+| `python -m qonaq calibrate train --site-id X` | голова «персонал/гость» зала; проверка — по времени (кропы после границы), `--split tracks` — старый способ |
 | `python -m qonaq synth` | синтетические ролики по сценариям `configs/synth/*.yaml` + прогон + eval |
 | `python scripts/fetch_datasets.py` → `python -m qonaq data index` | обучающие датасеты, единая схема |
 | `python -m qonaq train roles` / `train tables` | оценка и обучение голов «персонал/гость», «чистый/грязный» |

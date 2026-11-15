@@ -3,7 +3,7 @@
 site_id: staged
 name: Постановочный тест
 profile: restaurant
-process_fps: 4
+process_fps: auto           # D-043: GPU — 10 кадр/с, CPU — 4 (по тому, где реально работает детектор)
 detector:
   backend: auto
   onnx_model: yolox_m        # на CPU ноутбука ~2–4 кадр/с обработки: 10 минут записи ≈ 10–20 минут прогона

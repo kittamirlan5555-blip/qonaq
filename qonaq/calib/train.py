@@ -44,18 +44,49 @@ def _split_tracks(keys: list[str], labels: dict[str, str], test_share: float, se
     return train, test
 
 
+def _split_time(ts: np.ndarray, keys: list[str], label_of, test_share: float) -> float | None:
+    """Граница по времени: последние test_share размеченных кропов записи — проверка, всё раньше — обучение.
+    None — времени у кропов нет (старые сборы) или в обучение не попадают оба класса."""
+    lab = [(float(t), label_of(k)) for t, k in zip(ts, keys, strict=True) if label_of(k) in ("staff", "guest")]
+    if len(lab) < 4 or max(t for t, _ in lab) - min(t for t, _ in lab) <= 0:
+        return None
+    times = np.array(sorted(t for t, _ in lab))
+    t_split = float(times[min(len(times) - 1, int(round(len(times) * (1 - test_share))))])
+    if len({c for t, c in lab if t < t_split}) < 2:
+        return None
+    return t_split
+
+
 def train_site(site_id: str, general_head: Path | None = None, test_share: float = 0.3, seed: int = 0,
-               root: Path | None = None, use_general_data: bool = False) -> dict:
+               root: Path | None = None, use_general_data: bool = False, split: str = "time") -> dict:
     """По умолчанию — только кропы зала: на отложенных залах W2 общие датасеты ухудшали результат
-    (кривая в EVAL.md §8, D-022). use_general_data=True подмешивает их с весом 1 против 5/2 у зала."""
+    (кривая в EVAL.md §8, D-022). use_general_data=True подмешивает их с весом 1 против 5/2 у зала.
+
+    split="time" (по умолчанию, D-043): обучение — кропы до границы по времени, проверка — вручную размеченные
+    кропы после неё. Раньше (split="tracks") в проверку уходили случайные треки, а одни и те же люди ходят по
+    залу всю запись — соседние по времени треки того же официанта попадали и в обучение, и в проверку, и цифра
+    «было → стало» получалась завышенной (постановка 15.11: EVAL §25)."""
     S = load_samples(site_id, root)
     tracks = {t["key"]: t for t in load_tracks(site_id, root)}
     manual = {k: v for k, v in load_labels(site_id, root).items() if v in ("staff", "guest")}
     keys = [f"t{int(t)}" for t in S["track"]]
-    train_keys, test_keys = _split_tracks(sorted(manual), manual, test_share, seed)
+    ts = np.asarray(S.get("ts", np.zeros(len(keys))), dtype=float)
+
+    def label_of(k: str) -> str | None:
+        return manual.get(k) or (tracks.get(k) or {}).get("auto")
+
+    t_split = _split_time(ts, keys, label_of, test_share) if split == "time" else None
+    if t_split is not None:
+        is_test = np.array([t >= t_split for t in ts])
+        test_mask = np.array([bool(m) and k in manual for k, m in zip(keys, is_test, strict=True)])
+        test_keys = {k for k, m in zip(keys, test_mask, strict=True) if m}
+    else:
+        train_keys, test_keys = _split_tracks(sorted(manual), manual, test_share, seed)
+        is_test = np.array([k in test_keys for k in keys])
+        test_mask = is_test
     Xs, ys, ws = [], [], []
     for i, k in enumerate(keys):
-        if k in test_keys:
+        if is_test[i]:
             continue
         lab = manual.get(k) or (tracks.get(k) or {}).get("auto")
         if lab not in ("staff", "guest"):
@@ -81,11 +112,15 @@ def train_site(site_id: str, general_head: Path | None = None, test_share: float
         "task": "roles", "features": f"{S['encoder']}+hsv", "encoder": str(S["encoder"]), "hsv": True,
         "site": site_id, "n_site": int(len(ys)), "n_general": int(len(y) - len(ys)),
         "created": time.strftime("%Y-%m-%d %H:%M")})
-    # проверка на отложенных вручную размеченных треках
-    te = np.array([k in test_keys for k in keys])
+    # проверка на отложенных вручную размеченных кропах (после границы по времени или отложенных треках)
+    te = test_mask
     report: dict = {"site": site_id, "n_manual_tracks": len(manual), "n_test_tracks": len(test_keys),
                     "n_test_crops": int(te.sum()), "train_crops_site": int(len(ys)),
-                    "train_crops_general": int(len(y) - len(ys))}
+                    "train_crops_general": int(len(y) - len(ys)),
+                    "split": "time" if t_split is not None else "tracks",
+                    "t_split_s": round(t_split, 1) if t_split is not None else None}
+    if split == "time" and t_split is None:
+        report["split_note"] = "у кропов нет времени или до границы один класс — проверка на отложенных треках"
     if te.any():
         yt = np.array([int(manual[k] == "staff") for k, m in zip(keys, te, strict=True) if m])
         new = binary_metrics(yt, head.predict_proba(S["X"][te])[:, 1])
@@ -114,6 +149,11 @@ def format_report(r: dict) -> str:
         return f"{100 * m['balanced_acc']:.1f}%" if m else "—"
 
     s = f"Версия v{r['version']}: кропов зала в обучении {r['train_crops_site']}, общих {r['train_crops_general']}."
+    if r.get("split") == "time":
+        s += f"\nРазделение по времени: обучение — до {r['t_split_s']:.0f} с записи, проверка — после."
+    else:
+        s += ("\nРазделение по трекам (случайно): соседние по времени кропы тех же людей — и в обучении, "
+              "и в проверке; цифра завышена." + (f" ({r['split_note']})" if r.get("split_note") else ""))
     if "after" in r:
         s += (f"\nПроверка на {r['n_test_tracks']} отложенных треках ({r['n_test_crops']} кропов), balanced accuracy: "
               f"было {pct(r.get('before'))} → стало {pct(r['after'])}.")
@@ -125,11 +165,14 @@ def format_report(r: dict) -> str:
 
 # ------------------------------------------------------------------ кривая обучения на отложенных залах (W6)
 def calibration_curve(feats: dict, venues=("A", "B", "C"), ns=(0, 25, 50, 100, 300), seeds=(0, 1, 2),
-                      weight: float = SITE_WEIGHT_MANUAL) -> dict:
+                      weight: float = SITE_WEIGHT_MANUAL, split: str = "time") -> dict:
     """Для каждого отложенного зала: общая голова (другие залы) + n размеченных кропов этого зала.
-    Кропы для калибровки и тест — из РАЗНЫХ блоков времени зала (половина блоков на калибровку, половина
-    на тест), иначе соседние почти одинаковые кадры завысили бы цифру. n кропов набираются поровну
-    персонал/гость (как на странице проверки), если персонала хватает."""
+    n кропов набираются поровну персонал/гость (как на странице проверки), если персонала хватает.
+
+    split="time" (по умолчанию, D-043): калибровка — первая половина блоков времени зала, один блок — зазор,
+    тест — остальное (как в жизни: размечаем запись при установке, работаем дальше). split="blocks" — старый
+    способ: случайная половина блоков; половины чередуются внутри ролика, соседние кадры тех же людей попадают
+    в обе — цифры завышены (EVAL §8, поправки B8 и §25)."""
     base = next(iter(feats.values()))
     ok = base["ok"].astype(bool)
     X = np.concatenate([base["emb"], base["hsv"]], axis=1)[ok]
@@ -143,10 +186,16 @@ def calibration_curve(feats: dict, venues=("A", "B", "C"), ns=(0, 25, 50, 100, 3
         blocks = np.unique(g[v == venue])
         for seed in seeds:
             rng = np.random.default_rng(seed)
-            perm = rng.permutation(blocks)
-            cal_blocks = set(perm[: len(perm) // 2])
+            if split == "time":
+                order = sorted(blocks)
+                half = len(order) // 2
+                cal_blocks, test_blocks = set(order[:half]), set(order[half + 1:])  # блок order[half] — зазор
+            else:
+                perm = rng.permutation(blocks)
+                cal_blocks = set(perm[: len(perm) // 2])
+                test_blocks = set(blocks) - cal_blocks
             cal_pool = np.where((v == venue) & np.isin(g, list(cal_blocks)))[0]
-            test = np.where((v == venue) & ~np.isin(g, list(cal_blocks)))[0]
+            test = np.where((v == venue) & np.isin(g, list(test_blocks)))[0]
             if (y[test] == 1).sum() == 0 or (y[test] == 0).sum() == 0:
                 continue
             gen = cap_train(np.where(v != venue)[0], y, v)

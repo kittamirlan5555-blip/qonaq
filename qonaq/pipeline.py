@@ -56,6 +56,25 @@ class FrameResult:
     frame_index: int = 0
 
 
+def _iou(a, b) -> float:
+    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    inter = ix * iy
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _replay_hist(box, persons: list[Detection]):
+    """Повтор (qonaq/detect/replay.py): гистограмма торса детекции, на которой стоит трек (ByteTrack отдаёт рамку
+    сопоставленной детекции, так что совпадение почти всегда точное)."""
+    best, best_iou = None, 0.5
+    for d in persons:
+        v = _iou(box, d.xyxy)
+        if v > best_iou:
+            best, best_iou = d, v
+    return best.hist if best is not None else None
+
+
 def default_zones_path(camera_id: str) -> Path:
     return resolve_path(Path("configs") / "zones" / f"{camera_id}.yaml")
 
@@ -156,10 +175,12 @@ class CameraRuntime:
 
         # --- роли
         app = self._appearance(frame, ts, tracks)
+        replay = any(d.hist is not None for d in persons)
         obs_people = []
         for tr, zones in placed:
             table = next((z for z in zones if z in table_ids), None)
-            hist = torso_hist(frame, tr.xyxy)  # дёшево; нужна и форме, и проверке подмены id трекером
+            # дёшево; нужна и форме, и проверке подмены id трекером. В повторе кадра нет — гистограмма из записи.
+            hist = _replay_hist(tr.xyxy, persons) if replay else torso_hist(frame, tr.xyxy)
             obs_people.append(PersonObs(tr.id, tr.xyxy, table, hist, app.get(tr.id)))
         decisions = self.roles.update(ts, obs_people)
 
@@ -269,6 +290,13 @@ class Pipeline:
         if site.thresholds.use_dish_detection:
             site.detector.dishes = True  # сигнал «посуда на столе» требует классов посуды у детектора
         self.detector = detector or create_detector(site.detector)
+        if site.fps_auto:
+            dev = getattr(self.detector, "device", None)
+            if dev == "cache":  # кэш детекций создаёт детектор лениво — устройство по конфигу
+                from qonaq.detect.base import gpu_expected
+
+                dev = "cuda" if gpu_expected(site.detector) else "cpu"
+            log.info("process_fps: auto → %.0f кадр/с (детектор: %s)", site.resolve_fps(dev), dev)
         self.store = store
         self.stats = PipelineStats()
         uniform = None

@@ -6,8 +6,8 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from dataclasses import dataclass, field
+from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 
@@ -30,6 +30,9 @@ class Detection:
     y2: float
     conf: float
     label: str  # person | chair | dining table
+    # Гистограмма торса из записи-повтора (qonaq/detect/replay.py): там кадров нет, а роли и проверка подмены id
+    # трекером её требуют. Живой детектор её не заполняет — пайплайн считает её по кадру.
+    hist: Any = field(default=None, compare=False, repr=False)
 
     @property
     def xyxy(self) -> tuple[float, float, float, float]:
@@ -77,6 +80,19 @@ def ultralytics_available() -> bool:
     import importlib.util
 
     return importlib.util.find_spec("ultralytics") is not None and importlib.util.find_spec("torch") is not None
+
+
+def gpu_expected(cfg) -> bool:
+    """Будет ли детектор на GPU (без создания сессии): устройство не cpu и onnxruntime видит CUDA/DirectML."""
+    if str(getattr(cfg, "device", "auto")).lower() == "cpu":
+        return False
+    try:
+        import onnxruntime as ort
+
+        prov = set(ort.get_available_providers())
+    except Exception:  # noqa: BLE001
+        return False
+    return bool(prov & {"CUDAExecutionProvider", "DmlExecutionProvider"})
 
 
 def create_detector(cfg) -> Detector:

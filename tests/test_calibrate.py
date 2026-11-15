@@ -82,3 +82,23 @@ def test_review_app(site):
     assert store.load_labels("cafe", site)["t1"] == "staff"
     assert c.post("/api/label", json={"key": "t1", "label": "boss"}).status_code == 400
     assert c.get("/crops/../labels.json").status_code == 404
+
+
+def test_train_splits_by_time_by_default(site):
+    """D-043: проверка — кропы ПОСЛЕ границы по времени, обучение — до неё (не случайные треки: одни и те же
+    люди ходят по залу всю запись, и соседние по времени кропы попадали и туда, и туда)."""
+    d = store.calib_dir("cafe", site)
+    z = dict(np.load(d / "samples.npz"))
+    z["ts"] = np.arange(len(z["X"]), dtype=float) * 2.0 + (z["track"] % 2) * 0.5  # треки чередуются во времени
+    np.savez(d / "samples.npz", **z)
+    r = train_site("cafe", root=site, test_share=0.3)
+    assert r["split"] == "time" and r["t_split_s"] is not None
+    assert r["n_test_crops"] > 0 and r["after"]["balanced_acc"] >= 0.85
+    assert "по времени" in format_report(r)
+    r2 = train_site("cafe", root=site, split="tracks")
+    assert r2["split"] == "tracks" and "завышена" in format_report(r2)
+
+
+def test_train_falls_back_to_tracks_without_crop_times(site):
+    r = train_site("cafe", root=site)  # в фикстуре ts = 0 у всех кропов
+    assert r["split"] == "tracks" and r["split_note"]

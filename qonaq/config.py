@@ -71,6 +71,11 @@ class RestaurantThresholds(_Model):
     # Если роли так и не подтвердили «гостя» (смена id и т.п.), стол считается занятым после
     # seat_min_s * seat_unknown_factor непрерывного присутствия не-персонала.
     seat_unknown_factor: float = 3.0
+    # Постановка 15.11: «сидящий за столом» неизвестный — не стоит столько секунд подряд (официант, нагнувшийся
+    # к столу на секунду, не садится). Неизвестный, вставший на место пропавшего сидящего за столько секунд, —
+    # он же (трекер сменил id прикрытому гостю), а не визит.
+    occupant_sit_s: float = 3.0
+    occupant_fill_gap_s: float = 8.0
     # Стол, занятый с первых секунд потока, считается уже обслуженным (мы не знаем, сколько они ждут).
     # 30 с: детектор не всегда видит сидящего с первого кадра (перекрытия), а для потока это мелочь.
     preexisting_grace_s: float = 30.0
@@ -178,10 +183,23 @@ class RolesConfig(_Model):
     # W2: стоящий неподвижно у стола становится «гостем» только после стольких секунд (официант, убирающий
     # или принимающий заказ, стоит 10–60 с). Сидящий — после seat_min_s.
     standing_guest_min_s: float = 60.0
+    # «Сидит» прерывается, только если человек стоит дольше этого (рамка сидящего дрожит).
+    sit_flicker_s: float = 2.0
     # Если рамка трека между кадрами меняет пропорции в столько раз (сидящий 1:1 → стоящий 1:2.2), это другой
     # человек на том же id трекера (ByteTrack при перекрытии). 0 — выключить.
     identity_jump_aspect: float = 1.7
     identity_jump_similarity: float = 0.5  # ...и гистограмма торса похожа меньше этого (другая одежда)
+    # Постановка 15.11: прохожий заслонил сидящего, ByteTrack отдал ему id гостя, а форма рамки почти та же.
+    # Одежда на треке не похожа на его историю дольше identity_switch_s — это другой человек (0 — выключить).
+    identity_switch_similarity: float = 0.4
+    identity_switch_s: float = 0.7
+    # Та же одежда на том же месте — наследует историю и после долгого перекрытия (официант закрыл гостя на 5 с).
+    reid_clothes_gap_s: float = 20.0
+    reid_clothes_similarity: float = 0.65
+    # Порог «стоит» под камеру: эталон — высота подтверждённых сидящих гостей у этого стола (0 — выключить).
+    standing_height_ratio: float = 1.25
+    seated_learn_min_samples: int = 20
+    seated_learn_max_aspect: float = 2.6
     # Визит неизвестного к занятому столу считается визитом персонала, только если он стоит (SPEC §9a п.3).
     visit_requires_standing: bool = True
     staff_profile: str | None = None  # путь к configs/staff_profile.yaml
@@ -252,6 +270,11 @@ class SiteConfig(_Model):
     name: str = "Демо-объект"
     profile: Literal["restaurant", "clinic", "billiard"] = "restaurant"
     process_fps: float = Field(5.0, gt=0, le=30)
+    # `process_fps: auto` в YAML (D-043): на GPU — process_fps_gpu, на CPU — process_fps_cpu. Решается при создании
+    # пайплайна по тому, где на самом деле работает детектор (onnxruntime без DLL CUDA молча уходит на CPU).
+    fps_auto: bool = False
+    process_fps_gpu: float = Field(10.0, gt=0, le=30)
+    process_fps_cpu: float = Field(4.0, gt=0, le=30)
     cameras: list[CameraConfig] = Field(default_factory=list)
     detector: DetectorConfig = Field(default_factory=DetectorConfig)
     tracker: TrackerConfig = Field(default_factory=TrackerConfig)
@@ -267,6 +290,23 @@ class SiteConfig(_Model):
     runs_dir: str = "runs"
     api_host: str = "127.0.0.1"
     api_port: int = 8000
+
+    @model_validator(mode="before")
+    @classmethod
+    def _auto_fps(cls, data):
+        if isinstance(data, dict) and str(data.get("process_fps", "")).strip().lower() == "auto":
+            data = dict(data)
+            data["fps_auto"] = True
+            data["process_fps"] = data.get("process_fps_cpu", 4.0)
+        return data
+
+    def resolve_fps(self, device: str | None) -> float:
+        """`process_fps: auto` → частота по устройству детектора; иначе — как в конфиге."""
+        if self.fps_auto:
+            gpu = bool(device) and str(device).lower().startswith(("cuda", "directml", "dml", "gpu"))
+            self.process_fps = self.process_fps_gpu if gpu else self.process_fps_cpu
+            self.fps_auto = False
+        return self.process_fps
 
     @model_validator(mode="after")
     def _unique_cameras(self) -> SiteConfig:
