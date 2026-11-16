@@ -1,0 +1,16 @@
+# Независимая проверка на чужой камере (EVAL «Hog's Breath, двор»): запись трансляции заведения, 1080p.
+# Пороги — БОЕВЫЕ по умолчанию (SPEC §5), ничего не подогнано под запись. Только детектор — профиль GPU (S2):
+# YOLOX-m, 2 тайла (широкий кадр 16:9, люди мелкие у дальних столов), process_fps: auto (D-043).
+site_id: hogs_outside
+name: Hog's Breath, двор (тест)
+profile: restaurant
+process_fps: auto
+detector:
+  backend: onnx
+  onnx_model: yolox_m
+  onnx_tiles: 2
+  device: auto
+cameras:
+  - id: hogs_outside
+    source: data/videos/live/hogs_outside_from900.mp4
+    zones: configs/zones/hogs_outside.yaml

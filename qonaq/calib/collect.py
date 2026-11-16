@@ -99,7 +99,7 @@ def collect(video: str | Path, site: SiteConfig, site_id: str, encoder: str = "m
                 tr["thumbs"].append(name)
             feats.append(np.concatenate([e, hsv_features(r.frame, p.xyxy)]))
             x1, y1, x2, y2 = p.xyxy
-            meta.append((p.track_id, r.ts, x2 - x1, y2 - y1, int(p.standing), p.role))
+            meta.append((p.track_id, r.ts, x2 - x1, y2 - y1, int(p.standing), p.role, x1, y1, x2, y2))
             tr["n"] += 1
 
     stats = pipe.run(on_result=on_result, progress_every_s=30)
@@ -115,12 +115,15 @@ def collect(video: str | Path, site: SiteConfig, site_id: str, encoder: str = "m
         t["auto"] = auto_label(t, guest_min_s, staff_min_tables)
         tr_out.append(t)
     X = np.stack(feats).astype(np.float32) if feats else np.zeros((0, enc.dim + 256), np.float32)
-    m = np.array(meta, dtype=object) if meta else np.zeros((0, 6), dtype=object)
+    m = np.array(meta, dtype=object) if meta else np.zeros((0, 10), dtype=object)
     np.savez_compressed(out / "samples.npz", X=X,
                         track=np.array([int(v) for v in m[:, 0]], np.int64) if len(m) else np.zeros(0, np.int64),
                         ts=np.array([float(v) for v in m[:, 1]], np.float32) if len(m) else np.zeros(0, np.float32),
                         w=np.array([float(v) for v in m[:, 2]], np.float32) if len(m) else np.zeros(0, np.float32),
                         h=np.array([float(v) for v in m[:, 3]], np.float32) if len(m) else np.zeros(0, np.float32),
+                        # рамки кропов в кадре (x1, y1, x2, y2): чтобы ручная разметка могла найти человека по кадру
+                        xyxy=(np.array([[float(v) for v in row[6:10]] for row in m], np.float32) if len(m)
+                              else np.zeros((0, 4), np.float32)),
                         encoder=np.array(encoder))
     (out / "tracks.json").write_text(json.dumps(tr_out, ensure_ascii=False, indent=1), encoding="utf-8")
     summary = {"video": str(video), "scene_s": round(stats.scene_s, 1), "samples": int(len(X)),

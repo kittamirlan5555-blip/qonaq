@@ -54,7 +54,7 @@ def next_start_utc(tz_h: int, hhmm: str, now: dt.datetime) -> dt.datetime:
 
 
 def log(msg: str) -> None:
-    line = f"{dt.datetime.now(dt.timezone.utc):%Y-%m-%d %H:%M:%S}Z {msg}"
+    line = f"{dt.datetime.now(dt.UTC):%Y-%m-%d %H:%M:%S}Z {msg}"
     print(line, flush=True)
     with (OUT / "record.log").open("a", encoding="utf-8") as f:
         f.write(line + "\n")
@@ -71,12 +71,12 @@ def stream_url(ytdlp: str, vid: str, height: int) -> str | None:
 
 def record(ytdlp: str, vid: str, name: str, start: dt.datetime | None, seconds: float, height: int) -> None:
     if start is not None:
-        wait = (start - dt.datetime.now(dt.timezone.utc)).total_seconds()
+        wait = (start - dt.datetime.now(dt.UTC)).total_seconds()
         log(f"{name}: старт {start:%H:%M}Z (через {wait / 60:.0f} мин)")
         if wait > 0:
             time.sleep(wait)
     t_end = time.time() + seconds
-    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d_%H%MZ")
+    stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%d_%H%MZ")
     part = 0
     while time.time() < t_end - 20:  # поток оборвался — дописываем остаток в следующий файл
         url = stream_url(ytdlp, vid, height)
@@ -107,7 +107,7 @@ def main() -> int:
     a = ap.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
     keep_awake(True)
-    now = dt.datetime.now(dt.timezone.utc)
+    now = dt.datetime.now(dt.UTC)
     threads = []
     for vid, name, tz, hhmm in CAMS:
         if a.only and name not in a.only:
