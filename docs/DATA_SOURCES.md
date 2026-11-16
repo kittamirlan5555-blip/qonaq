@@ -63,13 +63,27 @@ FedericoPivotto). Записей «стол пустой», «люди рядо�
 | Файл (префикс) | Заведение, город | Канал (ведёт заведение) | Трансляция | Пояс | Что в кадре |
 |---|---|---|---|---|---|
 | `elbo_room_patio_fort_lauderdale` | Elbo Room (Las Olas), Fort Lauderdale, FL, США | Elbo Room (Home of ElboTV) | https://www.youtube.com/watch?v=bM0GplM_vPY | UTC−5 | патио: столики с гостями, сверху-сбоку |
-| `elbo_room_bar_fort_lauderdale` | Elbo Room, Fort Lauderdale | Elbo Room (Home of ElboTV) | https://www.youtube.com/watch?v=wVNt3l657X0 | UTC−5 | барная стойка + столики у окон, бармены |
+| `elbo_room_bar_fort_lauderdale` | Elbo Room, Fort Lauderdale | Elbo Room (Home of ElboTV) | https://www.youtube.com/watch?v=wVNt3l657X0 | UTC−5 | барная стойка, стоячая толпа, бармены |
 | `hogs_breath_outside_key_west` | Hog's Breath Saloon, Key West, FL | Hogs Breath Saloon Key West | https://www.youtube.com/watch?v=thzfsD7VDFg | UTC−5 | двор: обеденные столы сверху, официанты |
 | `hogs_breath_minibar_key_west` | Hog's Breath Saloon, Key West | Hogs Breath Saloon Key West | https://www.youtube.com/watch?v=S605ycm0Vlk | UTC−5 | мини-бар и столы, плотная толпа (рыбий глаз) |
 | `beach_bar_st_john_usvi` | The Beach Bar, Cruz Bay, St. John, USVI | St. John USVI (камера с логотипом бара, там же его календарь концертов) | https://www.youtube.com/watch?v=2wqpy036z24 | UTC−4 | веранда со столами и стойкой |
-| `windmill_bar_st_john_usvi` | The Windmill Bar, St. John, USVI | The Windmill Bar | https://www.youtube.com/watch?v=d-drfinzIWU | UTC−4 | терраса со столами на холме |
+| `windmill_bar_st_john_usvi` | The Windmill Bar, St. John, USVI | The Windmill Bar | https://www.youtube.com/watch?v=d-drfinzIWU | UTC−4 | терраса-сцена со столами, живая музыка |
 
 Отброшены: уличные камеры сторонних каналов (EarthCam, Teleport, «Real Samui Webcam» — улица, а не зал), Sloppy
 Joe's (фасад), трансляции музыкантов (Two Friends — сцена крупно), Café del Mar (закат), кухня/прилавок
 в Давао (сторонний канал, ночь по местному времени). Ссылка на трансляцию и время начала каждой записи — в
 `data/videos/live/*.json` и `record.log`.
+
+**Записано 15–16.11.2026** (все 6 — одним файлом, без обрывов, 1080p, ~3596 с, 0,5–2 ГБ; вечер пятницы по местному
+времени, 19:00–20:00). Что видно на самом деле (просмотр кадров раз в 10 мин, без запуска системы):
+
+| Запись | Гости | Столы | Персонал | Годится для |
+|---|---|---|---|---|
+| `hogs_breath_outside_key_west_20261116_0000Z` | весь час, много | ~10 обеденных столов сверху, гости сидят, еда на столах | официанты проходят между столами | **логика стола и подход официанта — лучшая из шести** |
+| `beach_bar_st_john_usvi_20261115_2300Z` | весь час | столы веранды + стойка | есть | логика стола; **картинка чёрно-белая** (ночной режим камеры) — роли по цвету формы не сработают |
+| `elbo_room_patio_fort_lauderdale_20261116_0000Z` | весь час | 2–3 высоких стола, остальное — стоящая толпа | футболка с надписью «STAFF» | роли staff/гость, толпа у столов (проходящие) |
+| `windmill_bar_st_john_usvi_20261115_2300Z` | одна компания за длинным столом весь час | 1 занятый стол, остальные пустые | музыканты у стола (не официанты) | долгая сессия одного стола; «стоящий у стола ≠ официант» |
+| `elbo_room_bar_fort_lauderdale_20261116_0000Z` | плотная стоячая толпа | столов почти не видно | бармены, «STAFF» | только детекция/трекинг в толпе, не логика стола |
+| `hogs_breath_minibar_key_west_20261116_0000Z` | плотная толпа, танцы | стойка | бармены | только детекция/трекинг в толпе |
+
+Разметки (GT) для этих записей нет — до неё сравнивать с системой нечего. Кадры выше в отчёты не включены.
