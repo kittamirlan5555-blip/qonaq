@@ -23,6 +23,7 @@ class PersonObs:
     table_zone: str | None = None
     torso_hist: np.ndarray | None = None
     appearance: float | None = None  # p(staff) от RoleClassifier на этом кадре (None — не считали)
+    posture: str | None = None  # D-044: sit / stand / bend по ключевым точкам; None — не понять (тогда по рамке)
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,7 @@ class RoleDecision:
     dwell_s: float
     reasons: tuple[str, ...] = ()
     stable_id: int = 0  # id, переживающий смену id трекером (наследуется от потерянного трека рядом)
+    posture: str | None = None  # D-044: сглаженная поза трека (sit / stand / bend)
 
 
 @dataclass
@@ -57,6 +59,8 @@ class _TrackState:
     mismatch_since: float | None = None
     sit_since: float | None = None  # с какого момента сидит без перерыва (None — стоит)
     stand_since: float | None = None
+    post: deque = field(default_factory=deque)  # (ts, sit|stand|bend) — поза по кадрам
+    posture: str | None = None
     good_xyxy: tuple[float, float, float, float] | None = None
     good_ts: float | None = None
 
@@ -213,7 +217,13 @@ class RoleTracker:
             st.positions.append((ts, *st.center))
             # --- сколько сидит без перерыва
             bw, bh = max(p.xyxy[2] - p.xyxy[0], 1.0), max(p.xyxy[3] - p.xyxy[1], 1.0)
-            if not self._standing(st.zone, bw, bh):
+            # D-044: поза по ключевым точкам; где точек не видно (ноги за столом / за краем кадра) — по рамке
+            eff = p.posture if p.posture is not None else ("stand" if self._standing(st.zone, bw, bh) else "sit")
+            st.post.append((ts, eff))
+            while st.post and st.post[0][0] < ts - cfg.posture_window_s:
+                st.post.popleft()
+            st.posture = Counter(v for _, v in st.post).most_common(1)[0][0]
+            if st.posture == "sit":
                 if st.sit_since is None:
                     st.sit_since = ts
                 st.stand_since = None
@@ -247,7 +257,7 @@ class RoleTracker:
         cfg = self.cfg
         x1, y1, x2, y2 = st.xyxy
         w, h = max(x2 - x1, 1.0), max(y2 - y1, 1.0)
-        standing = self._standing(st.zone, w, h)
+        standing = st.posture in ("stand", "bend") if st.posture is not None else self._standing(st.zone, w, h)
         dwell = ts - st.zone_since if st.zone is not None else 0.0
         guest_scores, staff_scores, reasons = [], [], []
         # 1) долго в зоне стола и почти не двигается -> гость
@@ -346,7 +356,8 @@ class RoleTracker:
         confs = [v[2] for v in st.votes if v[1] == st.role]
         st.confidence = float(np.mean(confs)) if confs else 0.3
         self._learn_seated(st, reasons)
-        return RoleDecision(st.role, round(st.confidence, 2), standing, round(dwell, 1), reasons, st.stable_id)
+        return RoleDecision(st.role, round(st.confidence, 2), standing, round(dwell, 1), reasons, st.stable_id,
+                            st.posture)
 
     def tables_visited(self, track_id: int, ts: float) -> int:
         st = self._tracks.get(track_id)

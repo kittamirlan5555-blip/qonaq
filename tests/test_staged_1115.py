@@ -174,11 +174,12 @@ def test_guest_with_new_id_standing_box_is_not_a_visit():
 
 
 def test_waiter_arriving_while_guest_changes_id_is_a_visit_of_right_length():
-    """Официант подошёл (id 9) и в этот же момент гость под ним сменил id (1 → 3): визит — 8 с официанта."""
+    """Официант подошёл (id 9) и в этот же момент гость под ним сменил id (1 → 3): визит — 8 с официанта.
+    D-044: новый id гостя по позе сидит — он «за столом» сам по себе, без правила наследования D-043."""
     tl = seated_tl()
     tl.run(1, guests=G, unknown=(9,), standing_tracks=(9,))
-    tl.run(7, unknown=(9, 3), standing_tracks=(9, 3))
-    tl.run(30, unknown=(3,), standing_tracks=(3,))
+    tl.run(7, unknown=(9, 3), standing_tracks=(9,))
+    tl.run(30, unknown=(3,), standing_tracks=())
     sv = tl.of("served")
     assert len(sv) == 1 and sv[0].ts == pytest.approx(50.0, abs=0.5)
     assert tl.types().count("staff_visit") == 0
@@ -209,9 +210,9 @@ def test_guest_new_id_flickering_keeps_its_place():
     tl.run(0.5, unknown=(9,), standing_tracks=(9,))
     tl.run(0.25, unknown=(9, 44), standing_tracks=(9,))
     tl.run(1.0, unknown=(9,), standing_tracks=(9,))  # 44 пропал
-    tl.run(8, unknown=(9, 44), standing_tracks=(9, 44))  # вернулся (и выглядит «стоящим»)
-    tl.run(10, unknown=(44,), standing_tracks=(44,))  # официант ушёл
-    tl.run(10, unknown=(44,), standing_tracks=(44,))
+    tl.run(8, unknown=(9, 44), standing_tracks=(9,))  # вернулся; по позе (D-044) сидит
+    tl.run(10, unknown=(44,), standing_tracks=())  # официант ушёл
+    tl.run(10, unknown=(44,), standing_tracks=())
     visits = tl.of("staff_visit")
     assert len(visits) == 1 and visits[0].payload["duration_s"] == pytest.approx(10.25, abs=1.0)
 

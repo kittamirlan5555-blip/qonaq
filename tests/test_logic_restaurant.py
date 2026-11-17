@@ -165,7 +165,10 @@ def test_seated_unknown_is_not_a_visit_when_posture_known():
     tl = seated(Timeline(machine())).run(10, guests=G)
     tl.run(8, guests=G, unknown=(9,), standing_tracks=()).run(10, guests=G)
     assert tl.m.state == TableState.SEATED_WAITING and "served" not in tl.types()
-    tl.run(8, guests=G, unknown=(9,), standing_tracks=(9,)).run(10, guests=G)  # а стоящий — визит
+    # D-044: тот, кто сидел за этим столом, вставая, визитом не становится; визит — стоящий, который не сидел
+    tl.run(8, guests=G, unknown=(9,), standing_tracks=(9,)).run(10, guests=G)
+    assert "served" not in tl.types()
+    tl.run(8, guests=G, unknown=(10,), standing_tracks=(10,)).run(10, guests=G)
     assert tl.m.state == TableState.SERVED and tl.of("served")[0].payload["confidence"] == "low"
 
 

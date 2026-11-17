@@ -253,10 +253,11 @@ def live(tmp_path):
                       cameras=[CameraConfig(id="cam", source="scripted.mp4")],
                       thresholds=RestaurantThresholds(seat_min_s=2, preexisting_grace_s=0, dropout_tolerance_s=1),
                       alerts=AlertThresholds(no_waiter_s=4),
-                      roles=RolesConfig(standing_guest_min_s=2))  # bbox 80×160 — «стоит» (W2: стоящий = гость позже)
+                      roles=RolesConfig(standing_guest_min_s=2))
     zones = ZoneSet(camera_id="cam", frame_size=(320, 240),
                     zones=[Zone(id="T01", polygon=[(0, 0), (320, 0), (320, 240), (0, 240)])])
-    det = FakeDetector([[Detection(100, 40, 180, 200, 0.9, "person")]])
+    # рамка 120×120 — «сидит» (D-044: стоящий стол не занимает)
+    det = FakeDetector([[Detection(100, 40, 220, 160, 0.9, "person")]])
     svc = LiveService(site, detector=det, use_env_sender=False)
     # подменяем зоны и источник на синтетику
     from qonaq.pipeline import CameraRuntime

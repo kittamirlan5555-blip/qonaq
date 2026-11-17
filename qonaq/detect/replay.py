@@ -49,6 +49,14 @@ def _unpack_hist(s: str | None) -> np.ndarray | None:
     return q / total if total > 0 else None
 
 
+def _unpack_kps(p) -> np.ndarray | None:
+    if len(p) < 7 or not p[6]:
+        return None
+    k = np.asarray(p[6], np.float32).reshape(17, 3)
+    k[:, 2] /= 100.0
+    return k
+
+
 def record(video: str | Path, site, out: str | Path, detector=None, max_seconds: float | None = None) -> dict:
     """Прогон видео детектором с частотой кадров объекта → файл повтора (gzip JSONL)."""
     from qonaq.detect.base import create_detector
@@ -60,6 +68,11 @@ def record(video: str | Path, site, out: str | Path, detector=None, max_seconds:
     det = detector or create_detector(site.detector)
     fps = site.resolve_fps(getattr(det, "device", None))
     min_conf = site.detector.conf
+    pose = None
+    if site.pose:  # D-044: ключевые точки 17×(x, y, уверенность×100) — целыми, повтор остаётся без кадров
+        from qonaq.pipeline import get_pose_estimator
+
+        pose = get_pose_estimator(site.detector.device)
     n = n_people = 0
     with VideoSource(str(video), fps, realtime=False, max_seconds=max_seconds) as src, \
             gzip.open(out, "wt", encoding="utf-8") as f:
@@ -68,11 +81,15 @@ def record(video: str | Path, site, out: str | Path, detector=None, max_seconds:
         for frame, ts in src:
             h, w = frame.shape[:2]
             people = []
-            for d in det.detect([frame])[0]:
-                if d.label != PERSON or d.conf < min_conf:
-                    continue
-                people.append([round(d.x1, 1), round(d.y1, 1), round(d.x2, 1), round(d.y2, 1), round(d.conf, 3),
-                               _pack_hist(torso_hist(frame, d.xyxy))])
+            dets = [d for d in det.detect([frame])[0] if d.label == PERSON and d.conf >= min_conf]
+            ks = pose.estimate(frame, [d.xyxy for d in dets]) if pose is not None else None
+            for i, d in enumerate(dets):
+                rec = [round(d.x1, 1), round(d.y1, 1), round(d.x2, 1), round(d.y2, 1), round(d.conf, 3),
+                       _pack_hist(torso_hist(frame, d.xyxy))]
+                if ks is not None:
+                    k = ks[i]
+                    rec.append([int(round(v)) for v in np.column_stack([k[:, :2], k[:, 2] * 100]).ravel()])
+                people.append(rec)
             f.write(json.dumps({"t": round(ts, 3), "wh": [w, h], "p": people}) + "\n")
             n += 1
             n_people += len(people)
@@ -156,7 +173,8 @@ class ReplayDetector:
         if len(frames) != 1:
             raise ValueError("повтор — одна камера, по кадру за вызов")
         r = self.source.replay.frames[self.source.idx]
-        return [[Detection(p[0], p[1], p[2], p[3], p[4], PERSON, hist=_unpack_hist(p[5])) for p in r["p"]]]
+        return [[Detection(p[0], p[1], p[2], p[3], p[4], PERSON, hist=_unpack_hist(p[5]), kps=_unpack_kps(p))
+                 for p in r["p"]]]
 
 
 def run(path: str | Path, site, zones_path: str | Path | None = None, start_s: float = 0.0,

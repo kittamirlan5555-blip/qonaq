@@ -33,6 +33,7 @@ class Detection:
     # Гистограмма торса из записи-повтора (qonaq/detect/replay.py): там кадров нет, а роли и проверка подмены id
     # трекером её требуют. Живой детектор её не заполняет — пайплайн считает её по кадру.
     hist: Any = field(default=None, compare=False, repr=False)
+    kps: Any = field(default=None, compare=False, repr=False)  # D-044: (17, 3) ключевые точки из повтора
 
     @property
     def xyxy(self) -> tuple[float, float, float, float]:

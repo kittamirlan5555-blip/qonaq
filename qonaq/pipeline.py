@@ -25,7 +25,7 @@ from qonaq.roles.tracker import GUEST, STAFF, PersonObs, RoleTracker
 from qonaq.roles.uniform import UniformProfile, torso_hist
 from qonaq.sources.video import VideoSource
 from qonaq.track.tracker import PersonTracker
-from qonaq.zones.assign import ZoneAssigner
+from qonaq.zones.assign import ZoneAssigner, bbox_overlap_fraction
 from qonaq.zones.models import ZoneSet, load_zones
 
 log = logging.getLogger("qonaq.pipeline")
@@ -40,6 +40,7 @@ class PersonView:
     zones: list[str]
     standing: bool = False
     dwell_s: float = 0.0
+    posture: str | None = None  # D-044: sit / stand / bend (сглаженная)
 
 
 @dataclass
@@ -75,6 +76,27 @@ def _replay_hist(box, persons: list[Detection]):
     return best.hist if best is not None else None
 
 
+def _replay_det(box, persons: list[Detection]) -> Detection | None:
+    best, best_iou = None, 0.5
+    for d in persons:
+        v = _iou(box, d.xyxy)
+        if v > best_iou:
+            best, best_iou = d, v
+    return best
+
+
+_POSE: dict[str, Any] = {}
+
+
+def get_pose_estimator(device: str = "auto"):
+    """Одна модель позы на процесс (на все камеры): веса ~50 МБ, сессия onnxruntime на GPU."""
+    if device not in _POSE:
+        from qonaq.detect.pose import PoseEstimator
+
+        _POSE[device] = PoseEstimator(device=device)
+    return _POSE[device]
+
+
 def default_zones_path(camera_id: str) -> Path:
     return resolve_path(Path("configs") / "zones" / f"{camera_id}.yaml")
 
@@ -107,6 +129,9 @@ class CameraRuntime:
         t = site.tracker
         self.tracker = PersonTracker(self.fps, t.track_activation_threshold, t.lost_track_buffer_s,
                                      t.minimum_matching_threshold, t.minimum_consecutive_frames, t.history_s)
+        from qonaq.detect.static_mask import StaticMask
+
+        self.static = StaticMask(t.static_mask_s, t.static_mask_drift)
         self.uniform = uniform
         self.roles = RoleTracker(site.roles, site.thresholds.seat_min_s, uniform)
         self.assigner = ZoneAssigner(self.zones)
@@ -163,36 +188,55 @@ class CameraRuntime:
         self._ensure_scale(frame)
         site = self.site
         persons_all = [d for d in detections if d.label == PERSON]
-        persons = [d for d in persons_all if d.conf >= site.detector.conf]
+        persons = self.static.filter(ts, [d for d in persons_all if d.conf >= site.detector.conf])
         tracks = self.tracker.update(persons, ts)
         blur_boxes = [d.xyxy for d in persons_all] + [t.xyxy for t in tracks]
 
-        # --- зоны
+        # --- поза (D-044): ключевые точки только у людей рядом со столами — дорого, считать всех незачем
+        replay = any(d.hist is not None for d in persons)
+        kps: dict[int, Any] = {}
+        if site.pose:
+            from qonaq.detect.pose import hips_point, posture
+
+            polys = [self.assigner._poly[z.id] for z in self.zones.by_type("table")]
+            near = [tr for tr in tracks if any(bbox_overlap_fraction(tr.xyxy, q) > 0 for q in polys)]
+            if replay:  # в повторе кадра нет — точки из записи (если записаны)
+                for tr in near:
+                    d = _replay_det(tr.xyxy, persons)
+                    if d is not None and d.kps is not None:
+                        kps[tr.id] = d.kps
+            elif near:
+                ks = get_pose_estimator(site.detector.device).estimate(frame, [tr.xyxy for tr in near])
+                kps = {tr.id: k for tr, k in zip(near, ks, strict=True)}
+
+        # --- зоны (якорь `hips` берёт бёдра из позы)
         placed: list[tuple[Any, list[str]]] = []
         for tr in tracks:
-            placed.append((tr, self.assigner.assign_one(tr.xyxy)))
+            hips = hips_point(kps.get(tr.id)) if kps else None
+            placed.append((tr, self.assigner.assign_one(tr.xyxy, hips)))
         table_ids = {z.id for z in self.zones.by_type("table")}
 
         # --- роли
         app = self._appearance(frame, ts, tracks)
-        replay = any(d.hist is not None for d in persons)
         obs_people = []
         for tr, zones in placed:
             table = next((z for z in zones if z in table_ids), None)
             # дёшево; нужна и форме, и проверке подмены id трекером. В повторе кадра нет — гистограмма из записи.
             hist = _replay_hist(tr.xyxy, persons) if replay else torso_hist(frame, tr.xyxy)
-            obs_people.append(PersonObs(tr.id, tr.xyxy, table, hist, app.get(tr.id)))
+            post = posture(kps[tr.id], tr.xyxy) if tr.id in kps else None
+            obs_people.append(PersonObs(tr.id, tr.xyxy, table, hist, app.get(tr.id), post))
         decisions = self.roles.update(ts, obs_people)
 
         # --- наблюдения по зонам
         per_zone: dict[str, dict[str, list[int]]] = {
-            z.id: {"guest": [], "staff": [], "unknown": [], "standing": [], "gconf": []}
+            z.id: {"guest": [], "staff": [], "unknown": [], "standing": [], "seated": [], "gconf": []}
             for z in self.zones.zones if z.type != "ignore"
         }
         people: list[PersonView] = []
         for tr, zones in placed:
             d = decisions[tr.id]
-            people.append(PersonView(tr.id, tr.xyxy, d.role, d.confidence, zones, d.standing, d.dwell_s))
+            people.append(PersonView(tr.id, tr.xyxy, d.role, d.confidence, zones, d.standing, d.dwell_s,
+                                     d.posture))
             for zid in zones:
                 key = d.role if d.role in (GUEST, STAFF) else "unknown"
                 sid = d.stable_id or tr.id  # стабильный id переживает смену id трекером
@@ -201,6 +245,8 @@ class CameraRuntime:
                     per_zone[zid]["gconf"].append(d.confidence)
                 if d.standing:
                     per_zone[zid]["standing"].append(sid)
+                elif d.posture == "sit":
+                    per_zone[zid]["seated"].append(sid)
         dirty = self.appearance.update(frame, ts, [t.xyxy for t in tracks] + [d.xyxy for d in persons_all],
                                        self.engine.snapshot(ts)) if self.appearance else {}
         people_boxes = [t.xyxy for t in tracks] + [d.xyxy for d in persons_all]
@@ -220,6 +266,7 @@ class CameraRuntime:
                 table_signals=tuple(tsig[z.id]) if z.id in tsig else None,
                 guest_confidence=float(np.mean(pz["gconf"])) if pz["gconf"] else None,
                 standing_tracks=tuple(pz["standing"]) if site.roles.visit_requires_standing else None,
+                seated_tracks=tuple(pz["seated"]) if site.pose else None,
                 felt=felt.get(z.id),
             ))
         events = self.engine.update(observations)

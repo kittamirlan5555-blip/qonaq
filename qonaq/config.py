@@ -49,6 +49,10 @@ class TrackerConfig(_Model):
     minimum_matching_threshold: float = 0.8
     minimum_consecutive_frames: int = 2
     history_s: float = 30.0
+    # D-044: маска неподвижных ложных «людей» (qonaq/detect/static_mask.py): детекция, простоявшая столько секунд
+    # без движения больше static_mask_drift диагонали рамки, выбрасывается до логики (наклейки, постер). 0 — выкл.
+    static_mask_s: float = 600.0
+    static_mask_drift: float = 0.05
 
 
 class RestaurantThresholds(_Model):
@@ -71,11 +75,6 @@ class RestaurantThresholds(_Model):
     # Если роли так и не подтвердили «гостя» (смена id и т.п.), стол считается занятым после
     # seat_min_s * seat_unknown_factor непрерывного присутствия не-персонала.
     seat_unknown_factor: float = 3.0
-    # Постановка 15.11: «сидящий за столом» неизвестный — не стоит столько секунд подряд (официант, нагнувшийся
-    # к столу на секунду, не садится). Неизвестный, вставший на место пропавшего сидящего за столько секунд, —
-    # он же (трекер сменил id прикрытому гостю), а не визит.
-    occupant_sit_s: float = 3.0
-    occupant_fill_gap_s: float = 8.0
     # Стол, занятый с первых секунд потока, считается уже обслуженным (мы не знаем, сколько они ждут).
     # 30 с: детектор не всегда видит сидящего с первого кадра (перекрытия), а для потока это мелочь.
     preexisting_grace_s: float = 30.0
@@ -185,6 +184,8 @@ class RolesConfig(_Model):
     standing_guest_min_s: float = 60.0
     # «Сидит» прерывается, только если человек стоит дольше этого (рамка сидящего дрожит).
     sit_flicker_s: float = 2.0
+    # D-044: поза трека — большинство за это окно (ключевые точки на отдельных кадрах дрожат)
+    posture_window_s: float = 1.5
     # Если рамка трека между кадрами меняет пропорции в столько раз (сидящий 1:1 → стоящий 1:2.2), это другой
     # человек на том же id трекера (ByteTrack при перекрытии). 0 — выключить.
     identity_jump_aspect: float = 1.7
@@ -283,6 +284,9 @@ class SiteConfig(_Model):
     billiard: BilliardThresholds = Field(default_factory=BilliardThresholds)
     alerts: AlertThresholds = Field(default_factory=AlertThresholds)
     roles: RolesConfig = Field(default_factory=RolesConfig)
+    # D-044: поза по ключевым точкам (RTMPose, qonaq/detect/pose.py) — «сидит / стоит / нагнулся» вместо пропорций
+    # рамки. Включается в YAML объекта (`pose: true`); нужны веса ~50 МБ (скачиваются сами) и лучше GPU.
+    pose: bool = False
     business: BusinessConfig = Field(default_factory=BusinessConfig)
     privacy: PrivacyConfig = Field(default_factory=PrivacyConfig)
     pos: PosConfig = Field(default_factory=PosConfig)

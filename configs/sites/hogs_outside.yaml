@@ -5,6 +5,7 @@ site_id: hogs_outside
 name: Hog's Breath, двор (тест)
 profile: restaurant
 process_fps: auto
+pose: true
 detector:
   backend: onnx
   onnx_model: yolox_m
@@ -13,4 +14,4 @@ detector:
 cameras:
   - id: hogs_outside
     source: data/videos/live/hogs_outside_from900.mp4
-    zones: configs/zones/hogs_outside.yaml
+    zones: configs/zones/hogs_outside_seats.yaml   # D-044: по местам, якорь hips (§26 был hogs_outside.yaml)
