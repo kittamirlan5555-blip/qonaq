@@ -1,0 +1,17 @@
+# Независимая проверка на чужой камере (EVAL «Hog's Breath, двор»): запись трансляции заведения, 1080p.
+# Пороги — БОЕВЫЕ по умолчанию (SPEC §5), ничего не подогнано под запись. Только детектор — профиль GPU (S2):
+# YOLOX-m, 2 тайла (широкий кадр 16:9, люди мелкие у дальних столов), process_fps: auto (D-043).
+site_id: beach_bar
+name: Beach Bar (отложенная проверка)
+profile: restaurant
+process_fps: auto
+pose: true
+detector:
+  backend: onnx
+  onnx_model: yolox_m
+  onnx_tiles: 2
+  device: auto
+cameras:
+  - id: beach_bar
+    source: data/videos/live/beach_bar_st_john_usvi_20261115_2300Z.mp4
+    zones: configs/zones/beach_bar_seats.yaml
