@@ -1,0 +1,17 @@
+# Независимая проверка на чужой камере (EVAL «Hog's Breath, двор»): запись трансляции заведения, 1080p.
+# Пороги — БОЕВЫЕ по умолчанию (SPEC §5), ничего не подогнано под запись. Только детектор — профиль GPU (S2):
+# YOLOX-m, 2 тайла (широкий кадр 16:9, люди мелкие у дальних столов), process_fps: auto (D-043).
+site_id: elbo_patio
+name: Elbo Room патио (отложенная проверка)
+profile: restaurant
+process_fps: auto
+pose: true
+detector:
+  backend: onnx
+  onnx_model: yolox_m
+  onnx_tiles: 2
+  device: auto
+cameras:
+  - id: elbo_patio
+    source: data/videos/live/elbo_patio_from1020.mp4
+    zones: configs/zones/elbo_patio_seats.yaml
