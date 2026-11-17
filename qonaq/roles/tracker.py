@@ -24,6 +24,7 @@ class PersonObs:
     torso_hist: np.ndarray | None = None
     appearance: float | None = None  # p(staff) от RoleClassifier на этом кадре (None — не считали)
     posture: str | None = None  # D-044: sit / stand / bend по ключевым точкам; None — не понять (тогда по рамке)
+    pose_on: bool = False  # поза для этого человека считалась (None тогда — «не понять», а не «нет позы»)
 
 
 @dataclass(frozen=True)
@@ -218,12 +219,15 @@ class RoleTracker:
             # --- сколько сидит без перерыва
             bw, bh = max(p.xyxy[2] - p.xyxy[0], 1.0), max(p.xyxy[3] - p.xyxy[1], 1.0)
             # D-044: поза по ключевым точкам; где точек не видно (ноги за столом / за краем кадра) — по рамке
-            eff = p.posture if p.posture is not None else ("stand" if self._standing(st.zone, bw, bh) else "sit")
+            aspect = "stand" if self._standing(st.zone, bw, bh) else "sit"
+            # поза считалась, но не определилась — «неизвестно» (для стола не «сидит»); позы нет вовсе — по рамке
+            eff = p.posture if p.posture is not None else ("?" if p.pose_on else aspect)
             st.post.append((ts, eff))
             while st.post and st.post[0][0] < ts - cfg.posture_window_s:
                 st.post.popleft()
-            st.posture = Counter(v for _, v in st.post).most_common(1)[0][0]
-            if st.posture == "sit":
+            top = Counter(v for _, v in st.post).most_common(1)[0][0]
+            st.posture = None if top == "?" else top
+            if (st.posture or aspect) == "sit":
                 if st.sit_since is None:
                     st.sit_since = ts
                 st.stand_since = None

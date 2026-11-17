@@ -224,7 +224,7 @@ class CameraRuntime:
             # дёшево; нужна и форме, и проверке подмены id трекером. В повторе кадра нет — гистограмма из записи.
             hist = _replay_hist(tr.xyxy, persons) if replay else torso_hist(frame, tr.xyxy)
             post = posture(kps[tr.id], tr.xyxy) if tr.id in kps else None
-            obs_people.append(PersonObs(tr.id, tr.xyxy, table, hist, app.get(tr.id), post))
+            obs_people.append(PersonObs(tr.id, tr.xyxy, table, hist, app.get(tr.id), post, tr.id in kps))
         decisions = self.roles.update(ts, obs_people)
 
         # --- наблюдения по зонам
@@ -245,7 +245,9 @@ class CameraRuntime:
                     per_zone[zid]["gconf"].append(d.confidence)
                 if d.standing:
                     per_zone[zid]["standing"].append(sid)
-                elif d.posture == "sit":
+                # «Сидит» — поза «сидит» или гость, неподвижный у стола (роль по времени, D-031/D-043), если он не
+                # нагнулся: с низкой угловой камеры сидящий и стоящий по точкам неразличимы (постановка 15.11).
+                if d.posture == "sit" or (d.role == GUEST and "dwell" in d.reasons and d.posture != "bend"):
                     per_zone[zid]["seated"].append(sid)
         dirty = self.appearance.update(frame, ts, [t.xyxy for t in tracks] + [d.xyxy for d in persons_all],
                                        self.engine.snapshot(ts)) if self.appearance else {}

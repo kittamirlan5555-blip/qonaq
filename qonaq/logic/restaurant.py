@@ -38,6 +38,7 @@ class _Episode:
     max_single: float = 0.0  # самое долгое пребывание одного id
     confirmed: bool = False  # визит уже засчитан (для подтверждённого персонала — сразу)
     emitted: bool = False  # по визиту уже выпущено событие (served / staff_visit / cleaned)
+    occ_start: bool = False  # D-044: в начале визита за столом сидели — это визит, даже если гости потом ушли
 
     @property
     def duration(self) -> float:
@@ -77,6 +78,8 @@ class _PosLike(Protocol):  # минимальный интерфейс POS, ну
 
 
 class TableMachine:
+    SAT_MIN_S = 3.0  # D-044: столько секунд сидения в сумме — «сидел за этим столом»
+
     def __init__(
         self,
         zone_id: str,
@@ -97,6 +100,10 @@ class TableMachine:
         self._occ = PresenceFilter(w, on, off)
         self._occupants: set[int] = set()  # кто сидит за столом сейчас
         self._sat_ids: set[int] = set()  # кто сидел за этим столом в текущей сессии (он не «визит», когда встаёт)
+        self._sit_time: dict[int, float] = {}  # id -> сколько секунд сидел у стола (в сумме)
+        self._sit_ts = None
+        self._here_since: dict[int, float] = {}  # id -> с какого момента непрерывно у стола (в любой позе)
+        self._here_last: dict[int, float] = {}
         self._first_ts: float | None = None
         self._ts = 0.0
         self._session: _Session | None = None
@@ -179,6 +186,14 @@ class TableMachine:
         standing = None if obs.standing_tracks is None else set(obs.standing_tracks)
         self._posture_known = standing is not None
         seated_obs = None if obs.seated_tracks is None else set(obs.seated_tracks)
+        for tid in guests | unknown | staff:
+            if ts - self._here_last.get(tid, -1e9) > self.th.dropout_tolerance_s:
+                self._here_since[tid] = ts
+            self._here_last[tid] = ts
+        if len(self._here_last) > 500:
+            keep = {t for t, v in self._here_last.items() if ts - v <= 60}
+            self._here_since = {t: v for t, v in self._here_since.items() if t in keep}
+            self._here_last = {t: v for t, v in self._here_last.items() if t in keep}
         occupants = self._update_occupants(guests, unknown, staff, standing, seated_obs)
         self._any.update(ts, bool(guests or unknown))
         self._guest.update(ts, bool(guests))
@@ -199,8 +214,11 @@ class TableMachine:
         else:
             # D-044: визит персонала — стоящий или нагнувшийся у стола, который сам за этим столом не сидел
             # (гость, вставший из-за стола, — не визит). Роль не нужна: она только повышает уверенность.
-            cand = standing - self._sat_ids - occupants
-            self._update_episode(ts, self._sat_ids | occupants, staff & cand, cand - staff, out)
+            # Кто уже в визите и всё ещё у стола (в любой позе) — визит продолжается: «визитёр», оставшийся у стола
+            # надолго (гость под новым id после перекрытия), даст визит длиннее visit_max_s, то есть не визит.
+            in_ep = set(self._episode.seen) if self._episode is not None else set()
+            cand = (standing | ((guests | unknown | staff) & in_ep)) - self._sat_ids
+            self._update_episode(ts, self._sat_ids, staff & cand, cand - staff, out)
 
         if self.state == TableState.FREE:
             self._try_seat(ts, out, dirty=False)
@@ -230,10 +248,19 @@ class TableMachine:
         else:
             occ = (guests | unknown) - standing - staff
         self._occupants = occ
+        # «Сидел за этим столом» — только кто сидел в сумме SAT_MIN_S: официант, на один кадр «севший» из-за
+        # дрожания позы, визитом быть не перестаёт (постановка 15.11, 5:04).
+        dt = 0.0 if self._sit_ts is None else min(max(self._ts - self._sit_ts, 0.0), 1.0)
+        self._sit_ts = self._ts
+        for tid in occ:
+            self._sit_time[tid] = self._sit_time.get(tid, 0.0) + dt
+        steady = {t for t in occ if self._sit_time.get(t, 0.0) >= self.SAT_MIN_S}
         if self._session is None and self.state == TableState.FREE:
-            self._sat_ids = set(occ)  # до посадки: кто сидит сейчас (станет первым составом)
+            self._sat_ids = steady  # до посадки: кто сидит сейчас (станет первым составом)
         else:
-            self._sat_ids |= occ
+            self._sat_ids |= steady
+        if len(self._sit_time) > 500:
+            self._sit_time = {t: v for t, v in self._sit_time.items() if t in self._sat_ids or t in occ}
         return occ
 
     # ------------------------------------------------------------------ visits
@@ -262,7 +289,8 @@ class TableMachine:
         visitors = staff | unknown
         if visitors:
             if ep is None:
-                ep = self._episode = _Episode(start=ts, last_seen=ts)
+                ep = self._episode = _Episode(start=ts, last_seen=ts,
+                                              occ_start=self._posture_known and bool(self._occupants))
             for tid in visitors:
                 ep.first_seen.setdefault(tid, ts)
                 ep.seen[tid] = (ep.seen[tid][0] if tid in ep.seen else ts, ts)
@@ -286,7 +314,7 @@ class TableMachine:
     def _finish_episode(self, ep: _Episode, ts: float, out: list[Event]) -> None:
         if ep.confirmed:
             if not ep.emitted and self.state == TableState.SERVED and self._session is not None:
-                if self._guest_here():
+                if self._guest_here() or ep.occ_start:
                     self._emit_staff_visit(ep, out)
                 else:
                     self._absent_visits.append(ep)
@@ -324,7 +352,7 @@ class TableMachine:
         elif self.state == TableState.SERVED and s is not None:
             if not final:
                 return  # повторный визит фиксируем по его окончании — с полной длительностью
-            if not self._guest_here():
+            if not self._guest_here() and not ep.occ_start:
                 # Гостей сейчас нет: это может быть уборка после ухода. Решим, когда станет ясно.
                 self._absent_visits.append(ep)
                 return
@@ -363,6 +391,9 @@ class TableMachine:
                 return False
             filt = self._any
         seated_ts = filt.since if filt.since is not None else ts
+        if self._posture_known and self._occupants:
+            # Сел — с момента, когда сидящий появился у стола (подошёл и сел), а не когда его «сидение» подтвердилось.
+            seated_ts = min(seated_ts, *(self._here_since.get(t, seated_ts) for t in self._occupants))
         seated_ts = max(seated_ts, self._left_ts if (dirty and self._left_ts is not None) else self.state_since)
         # preexisting_grace_s: 0 выключает правило «сидели до старта» совсем (демо-конфиги).
         preexisting = (not dirty) and th.preexisting_grace_s > 0 and self._first_ts is not None and (
