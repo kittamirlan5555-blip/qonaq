@@ -153,3 +153,10 @@ def hips_point(kps: np.ndarray | None, thr: float = 0.3) -> tuple[float, float] 
         return None
     hp = _mean(kps, (L_HIP, R_HIP), thr)
     return None if hp is None else (float(hp[0]), float(hp[1]))
+
+
+def legs_visible(kps: np.ndarray | None, thr: float = 0.3) -> bool:
+    """D-046: видны ли ноги (хоть одно колено или щиколотка). Нет — нижняя часть обрезана кадром или закрыта."""
+    if kps is None:
+        return False
+    return bool(any(kps[i, 2] >= thr for i in (L_KNEE, R_KNEE, L_ANK, R_ANK)))

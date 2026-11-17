@@ -33,6 +33,9 @@ class Zone(BaseModel):
     seats: int | None = None
     # service_point: полигон «за стойкой», где стоит сотрудник (для алерта «стойка пустует»).
     staff_polygon: list[tuple[float, float]] | None = None
+    # D-046: стол — полоса подхода официанта (docs/ZONES_GUIDE.md). Кто стоит в ней — «у стола» (визит), но по
+    # запасному правилу «неподвижный = сидит» сидящим не считается: оно — только для зоны мест (polygon).
+    approach: list[tuple[float, float]] | None = None
 
     @field_validator("polygon")
     @classmethod
@@ -104,7 +107,8 @@ class ZoneSet(BaseModel):
             return [(x * sx, y * sy) for x, y in poly] if poly else poly
 
         zones = [
-            z.model_copy(update={"polygon": sc(z.polygon), "staff_polygon": sc(z.staff_polygon)})
+            z.model_copy(update={"polygon": sc(z.polygon), "staff_polygon": sc(z.staff_polygon),
+                                 "approach": sc(z.approach)})
             for z in self.zones
         ]
         return ZoneSet(camera_id=self.camera_id, frame_size=(width, height), zones=zones)

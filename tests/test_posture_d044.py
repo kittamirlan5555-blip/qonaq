@@ -136,3 +136,15 @@ def test_friend_who_comes_to_empty_table_and_sits_is_not_cleaning():
     tl.run(30, unknown=(30,), standing_tracks=(), seated_tracks=(30,))  # и сел
     assert "cleaned" not in tl.types()
     assert "seated" in tl.types()[1:] and tl.m.state != TableState.FREE
+
+
+def test_left_time_is_when_last_sitter_walked_away_not_when_stood_up():
+    """D-046: встали в 60 с, постояли у стола 30 с, ушли в 90 с — «ушли» = 90 с; подтверждение — 90 с без сидящих."""
+    tl = Timeline(machine()).run(30, unknown=(1, 2), standing_tracks=(), seated_tracks=(1, 2))
+    tl.run(8, unknown=(1, 2, 9), standing_tracks=(9,), seated_tracks=(1, 2))
+    tl.run(22, unknown=(1, 2), standing_tracks=(), seated_tracks=(1, 2))
+    tl.run(30, unknown=(1, 2), standing_tracks=(1, 2), seated_tracks=())
+    tl.run(120, standing_tracks=(), seated_tracks=())
+    left = tl.of("left")
+    assert left and abs(left[0].ts - 90.0) <= 1.0
+    assert left[0].payload["detected_ts"] <= 60.0 + 90.0 + 6.0  # подтверждено через ~90 с после того, как встали

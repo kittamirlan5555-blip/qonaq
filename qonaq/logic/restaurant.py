@@ -153,6 +153,14 @@ class TableMachine:
         since = occ.since if occ.since is not None else ts
         return max(since, s.seated_ts) if s is not None else since
 
+    def _leave_time(self, left_ts: float, ts: float) -> float:
+        """D-046: «ушли» — когда последний, кто сидел за этим столом, вышел из зоны (постоял у стола и ушёл), а не
+        когда он встал. Подтверждение — по-прежнему leave_min_s без сидящих."""
+        if not self._posture_known or not self._sat_ids:
+            return left_ts
+        last = max((self._here_last[t] for t in self._sat_ids if t in self._here_last), default=left_ts)
+        return max(left_ts, min(last, ts))
+
     # ------------------------------------------------------------------ main
     def _on_gap(self, a: float, b: float) -> None:
         """Наблюдений не было с a по b (обрыв камеры): таймеры алертов не должны считать это время,
@@ -191,7 +199,7 @@ class TableMachine:
                 self._here_since[tid] = ts
             self._here_last[tid] = ts
         if len(self._here_last) > 500:
-            keep = {t for t, v in self._here_last.items() if ts - v <= 60}
+            keep = {t for t, v in self._here_last.items() if ts - v <= 60} | self._sat_ids
             self._here_since = {t: v for t, v in self._here_since.items() if t in keep}
             self._here_last = {t: v for t, v in self._here_last.items() if t in keep}
         occupants = self._update_occupants(guests, unknown, staff, standing, seated_obs)
@@ -436,6 +444,7 @@ class TableMachine:
         occ = self._occupancy()
         left_ts = self._absent_since(ts)
         if left_ts is not None and ts - left_ts >= self.th.leave_min_s:
+            left_ts = self._leave_time(left_ts, ts)
             out.append(self._ev(left_ts, "walkout_before_service", waited_s=round(left_ts - s.seated_ts, 1)))
             self._set_state(TableState.FREE, left_ts, out)
             self._session = None
@@ -469,6 +478,7 @@ class TableMachine:
         left_ts = self._absent_since(ts)
         if left_ts is None or ts - left_ts < self.th.leave_min_s:
             return
+        left_ts = self._leave_time(left_ts, ts)
         out.append(self._ev(left_ts, "left", visit_duration_s=round(left_ts - s.seated_ts, 1),
                             staff_visits=s.visits, preexisting=s.preexisting))
         self._left_ts = left_ts

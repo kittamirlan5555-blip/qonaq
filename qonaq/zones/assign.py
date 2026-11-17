@@ -82,6 +82,7 @@ class ZoneAssigner:
     def __init__(self, zones: ZoneSet):
         self.zones = zones
         self._poly = {z.id: z.np_polygon() for z in zones.zones}
+        self._approach = {z.id: np.array(z.approach, dtype=np.float32) for z in zones.zones if z.approach}
         self._staff_poly = {
             z.id: np.array(z.staff_polygon, dtype=np.float32) for z in zones.zones if z.staff_polygon
         }
@@ -100,6 +101,8 @@ class ZoneAssigner:
             if z.type == "ignore":
                 continue
             s = zone_score(box, z, self._poly[z.id], hips)
+            if s <= 0 and z.id in self._approach:
+                s = 0.005 if zone_score(box, z, self._approach[z.id], hips) > 0 else 0.0  # полоса подхода
             if s <= 0:
                 continue
             if z.type == "table":
@@ -113,6 +116,11 @@ class ZoneAssigner:
 
     def assign(self, boxes: Sequence[BBox]) -> list[list[str]]:
         return [self.assign_one(b) for b in boxes]
+
+    def in_seat_area(self, box: BBox, zone_id: str, hips: tuple[float, float] | None = None) -> bool:
+        """D-046: человек в зоне мест (polygon), а не только в полосе подхода."""
+        z = next((q for q in self.zones.zones if q.id == zone_id), None)
+        return z is not None and zone_score(box, z, self._poly[zone_id], hips) > 0
 
     def in_staff_area(self, box: BBox, zone_id: str) -> bool:
         poly = self._staff_poly.get(zone_id)

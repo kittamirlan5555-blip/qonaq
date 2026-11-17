@@ -191,6 +191,17 @@ class CameraRuntime:
             self._app_last = {k: v for k, v in self._app_last.items() if k in live}
         return {t.id: float(p) for t, p in zip(due, probs, strict=True)}
 
+    def _fallback_seated(self, tr, zid: str, post: str | None, kp, hips) -> bool:
+        """D-046: «неподвижный гость = сидит» — только если поза не «стоит»/«нагнулся», человек в зоне мест (не в
+        полосе подхода) и, на камере сверху, ноги не видны (обрезаны кадром или закрыты). Стоящий с видимыми ногами
+        по этому правилу сидящим не становится (женщина за центральным столом Hog's, EVAL §27). На угловой камере
+        сидящий и стоящий по точкам неразличимы и с видимыми ногами (D-044) — там условие про ноги не применяется."""
+        from qonaq.detect.pose import legs_visible
+
+        if post in ("stand", "bend") or not self.assigner.in_seat_area(tr.xyxy, zid, hips):
+            return False
+        return self.view == "angled" or not legs_visible(kp)
+
     def process(self, frame: np.ndarray, ts: float, detections: list[Detection]) -> FrameResult:
         self._ensure_scale(frame)
         site = self.site
@@ -218,8 +229,10 @@ class CameraRuntime:
 
         # --- зоны (якорь `hips` берёт бёдра из позы)
         placed: list[tuple[Any, list[str]]] = []
+        hips_of: dict[int, Any] = {}
         for tr in tracks:
             hips = hips_point(kps.get(tr.id)) if kps else None
+            hips_of[tr.id] = hips
             placed.append((tr, self.assigner.assign_one(tr.xyxy, hips)))
         table_ids = {z.id for z in self.zones.by_type("table")}
 
@@ -262,8 +275,8 @@ class CameraRuntime:
                     per_zone[zid]["standing"].append(sid)
                 # «Сидит» — поза «сидит» или гость, неподвижный у стола (роль по времени, D-031/D-043), если он не
                 # нагнулся: с низкой угловой камеры сидящий и стоящий по точкам неразличимы (постановка 15.11).
-                if d.posture == "sit" or (self.view != "overhead" and d.role == GUEST and "dwell" in d.reasons
-                                          and d.posture != "bend"):
+                if d.posture == "sit" or (d.role == GUEST and "dwell" in d.reasons and self._fallback_seated(
+                        tr, zid, d.posture, kps.get(tr.id), hips_of.get(tr.id))):
                     per_zone[zid]["seated"].append(sid)
         dirty = self.appearance.update(frame, ts, [t.xyxy for t in tracks] + [d.xyxy for d in persons_all],
                                        self.engine.snapshot(ts)) if self.appearance else {}
