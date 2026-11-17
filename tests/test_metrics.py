@@ -58,7 +58,7 @@ def test_sessions_are_built_from_events():
     assert ss["T01"]["outcome"] == "completed" and ss["T02"]["outcome"] == "open"
     assert ss["T01"]["response_time_s"] == pytest.approx(60, abs=1.5)
     assert ss["T01"]["visit_duration_s"] == pytest.approx(280, abs=2)
-    assert ss["T01"]["cleanup_time_s"] == pytest.approx(210, abs=3)
+    assert ss["T01"]["cleanup_time_s"] == pytest.approx(205, abs=3)  # D-045: clean_min_s = 5
     assert ss["T02"]["response_time_s"] == pytest.approx(240, abs=1.5)
 
 

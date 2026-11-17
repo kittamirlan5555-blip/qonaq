@@ -299,7 +299,9 @@ class TableMachine:
             ep.has_staff = ep.has_staff or bool(staff)
             # Подтверждённый персонал: визит засчитывается сразу по достижении порога.
             need = self.th.clean_min_s if self.state == TableState.NEEDS_CLEANING else self.th.visit_min_s
-            if ep.has_staff and not ep.confirmed and ep.duration >= need:
+            # D-045: с позой уборка решается по окончании визита (ушёл, а не сел за стол — тогда это посадка)
+            late_clean = self._posture_known and self.state == TableState.NEEDS_CLEANING
+            if ep.has_staff and not ep.confirmed and ep.duration >= need and not late_clean:
                 ep.confirmed = True
                 self._on_visit(ep, ts, out, final=False)
             elif (ep.has_staff and ep.confirmed and not ep.emitted and self.state == TableState.NEEDS_CLEANING
@@ -320,9 +322,9 @@ class TableMachine:
                     self._absent_visits.append(ep)
             return
         th = self.th
-        if ep.has_staff:
-            return  # персонал, но короче порога — не визит
         dirty = self.state == TableState.NEEDS_CLEANING
+        if ep.has_staff and not (dirty and self._posture_known):
+            return  # персонал, но короче порога — не визит
         need = th.clean_min_s if dirty else th.visit_min_s
         upper = float("inf") if dirty else th.visit_max_s
         if need <= ep.duration <= upper and ep.max_single >= need / 2:
@@ -359,6 +361,10 @@ class TableMachine:
             self._emit_staff_visit(ep, out)
         elif self.state == TableState.NEEDS_CLEANING:
             ep.emitted = True
+            if self._signals_on and self._posture_known:
+                # D-045: если включён эталон пустого стола — «убрано», когда после визита стол стал похож на пустой
+                self._pending_clean = (ep.last_seen if final else ts, conf)
+                return
             self._cleaned(ep.last_seen if final else ts, out, by="staff_visit", confidence=conf)
 
     def _emit_staff_visit(self, ep: _Episode, out: list[Event]) -> None:
@@ -487,7 +493,17 @@ class TableMachine:
 
     def _step_dirty(self, ts: float, obs: ZoneObservation, out: list[Event]) -> None:
         if self._try_seat(ts, out, dirty=True):
+            self._pending_clean = None
             return
+        pend = getattr(self, "_pending_clean", None)
+        if pend is not None:
+            sig = self._table_dirty(obs)
+            if sig is False:
+                self._pending_clean = None
+                self._cleaned(pend[0], out, by="staff_visit+appearance", confidence=pend[1])
+                return
+            if ts - pend[0] > 60.0:
+                self._pending_clean = None  # визит был, но стол так и не стал похож на пустой — не убрано
         if self._signals_on and not (self._n_guest or self._n_unknown or self._n_staff):
             dirty_sig = self._table_dirty(obs)
             if dirty_sig is False:

@@ -13,7 +13,7 @@ from qonaq.sources.video import VideoSource, backoff_delays, parse_source
 def test_site_config_defaults_match_spec():
     s = SiteConfig()
     th = s.thresholds
-    assert (th.seat_min_s, th.visit_min_s, th.leave_min_s, th.clean_min_s, th.dropout_tolerance_s) == (15, 4, 90, 10, 5)
+    assert (th.seat_min_s, th.visit_min_s, th.leave_min_s, th.clean_min_s, th.dropout_tolerance_s) == (15, 4, 90, 5, 5)
     assert (s.alerts.no_waiter_s, s.alerts.dirty_table_s, s.alerts.long_service_without_visit_s) == (180, 300, 900)
     assert s.privacy.blur_faces is True
 

@@ -66,6 +66,7 @@ class ZoneSet(BaseModel):
 
     camera_id: str = ""
     frame_size: tuple[int, int] | None = None  # (width, height) кадра, на котором размечали
+    view: str | None = None  # D-045: overhead | angled — тип камеры, если не задан в конфиге камеры
     zones: list[Zone] = Field(default_factory=list)
 
     @model_validator(mode="after")

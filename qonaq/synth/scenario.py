@@ -97,7 +97,7 @@ def presence_intervals(sc: Scenario, zone_id: str, kind: str, pose: str | None =
 
 
 def derive_events(sc: Scenario, visit_min_s: float = 4.0, leave_min_s: float = 90.0,
-                  clean_min_s: float = 10.0) -> list[dict]:
+                  clean_min_s: float = 5.0) -> list[dict]:
     """Правда по каждой зоне из таймлайна актёров (SPEC §5)."""
     out: list[dict] = []
     for z in sc.zones:
@@ -127,7 +127,7 @@ def derive_events(sc: Scenario, visit_min_s: float = 4.0, leave_min_s: float = 9
     return sorted(out, key=lambda x: (x["t"], x["zone"]))
 
 
-def dish_intervals(sc: Scenario, leave_min_s: float = 90.0, clean_min_s: float = 10.0) -> dict[str, list[tuple]]:
+def dish_intervals(sc: Scenario, leave_min_s: float = 90.0, clean_min_s: float = 5.0) -> dict[str, list[tuple]]:
     """Посуда на столе: от ухода последнего гостя сессии до конца уборки (или конца ролика)."""
     res: dict[str, list[tuple]] = {}
     ev = derive_events(sc, leave_min_s=0.01, clean_min_s=clean_min_s)  # уход «сразу», чтобы поставить посуду

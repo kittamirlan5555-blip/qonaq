@@ -62,7 +62,7 @@ class RestaurantThresholds(_Model):
     visit_min_s: float = 4.0
     visit_max_s: float = 90.0
     leave_min_s: float = 90.0
-    clean_min_s: float = 10.0
+    clean_min_s: float = 5.0  # D-045: уборка — стоящий/нагнувшийся у стола после «ушли» от 5 с
     dropout_tolerance_s: float = 5.0
     # Скользящее окно присутствия (SPEC §9a п.1): «включено» при доле >= on, «выключено» при доле <= off.
     presence_on_ratio: float = 0.7
@@ -246,6 +246,9 @@ class CameraConfig(_Model):
     process_fps: float | None = None
     loop: bool = False  # зациклить файл (для демо/эмуляции потока)
     realtime: bool | None = None  # для файла: читать в темпе реального времени (эмуляция потока)
+    # D-045: тип камеры (docs/ZONES_GUIDE.md): overhead — сверху, поза надёжна; angled — в углу/сбоку, сидящий и
+    # стоящий по точкам неразличимы, «сидит» добавляется из «гость неподвижен у стола». auto — по первым минутам.
+    view: Literal["auto", "overhead", "angled"] = "auto"
 
     @property
     def title(self) -> str:

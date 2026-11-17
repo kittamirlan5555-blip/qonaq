@@ -111,3 +111,28 @@ def test_guest_who_sat_and_stands_up_is_not_a_visit():
     tl.run(20, unknown=(1, 2), standing_tracks=(2,), seated_tracks=(1,))  # 2 встал, поговорить стоя
     tl.run(10, unknown=(1, 2), standing_tracks=(), seated_tracks=(1, 2))
     assert "served" not in tl.types() and "staff_visit" not in tl.types()
+
+
+# ---------------------------------------------------------------- D-045: «убрано»
+def _left_tl() -> Timeline:
+    tl = Timeline(machine()).run(30, unknown=(1,), standing_tracks=(), seated_tracks=(1,))
+    tl.run(8, unknown=(1, 9), standing_tracks=(9,), seated_tracks=(1,))  # официант
+    tl.run(20, unknown=(1,), standing_tracks=(), seated_tracks=(1,))
+    tl.run(100, standing_tracks=(), seated_tracks=())  # ушли
+    assert tl.m.state == TableState.NEEDS_CLEANING
+    return tl
+
+
+def test_cleaning_is_a_standing_or_bent_visit_of_5s_after_left():
+    tl = _left_tl()
+    tl.run(6, unknown=(20,), standing_tracks=(20,), seated_tracks=()).run(5, standing_tracks=(), seated_tracks=())
+    cl = tl.of("cleaned")
+    assert cl and tl.m.state == TableState.FREE and abs(cl[0].ts - (158 + 6)) <= 1.0
+
+
+def test_friend_who_comes_to_empty_table_and_sits_is_not_cleaning():
+    tl = _left_tl()
+    tl.run(6, unknown=(30,), standing_tracks=(30,), seated_tracks=())  # подошёл к пустому столу
+    tl.run(30, unknown=(30,), standing_tracks=(), seated_tracks=(30,))  # и сел
+    assert "cleaned" not in tl.types()
+    assert "seated" in tl.types()[1:] and tl.m.state != TableState.FREE

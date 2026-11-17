@@ -140,7 +140,7 @@ def site_yaml(site_id: str, name: str, cams: list[FoundCamera], process_fps: flo
     return {
         "site_id": site_id, "name": name, "profile": "restaurant", "process_fps": process_fps,
         "cameras": [{"id": c.cam_id, "name": f"{VENDOR_RU.get(c.vendor, c.vendor)} · канал {c.channel}",
-                     "source": c.url_env,
+                     "source": c.url_env, "view": "auto",  # D-045: overhead | angled | auto (по первым минутам)
                      **({"zones": _rel(c.zones_path)} if c.zones_path else {})} for c in cams],
         "detector": {"onnx_model": model, "onnx_tiles": 1},
         "business": {"avg_check_kzt": 15000, "open_hours": "10:00-23:00", "timezone": "Asia/Almaty"},

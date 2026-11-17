@@ -86,6 +86,10 @@ def _replay_det(box, persons: list[Detection]) -> Detection | None:
 
 
 _POSE: dict[str, Any] = {}
+# D-045: автоопределение типа камеры. С камеры сверху поза людей у столов определяется у ~70% (Hog's 0,70, Beach Bar
+# 0,68), с угловой — у ~15% (постановка 15.11). Пока не решено — как angled (запасное правило включено).
+VIEW_AUTO_MIN_OBS = 200
+VIEW_AUTO_OVERHEAD_SHARE = 0.4
 
 
 def get_pose_estimator(device: str = "auto"):
@@ -123,6 +127,9 @@ class CameraRuntime:
         self.cam = cam
         self.fps = cam.process_fps or site.process_fps
         self._zones_src = zones if zones is not None else load_camera_zones(cam)
+        # D-045: тип камеры — из конфига камеры, иначе из файла зон, иначе auto (решается по первым минутам)
+        self.view = cam.view if cam.view != "auto" else (self._zones_src.view or "auto")
+        self._view_n = self._view_det = 0
         self.zones = self._zones_src
         self._scaled_for: tuple[int, int] | None = None
         self._pos = pos
@@ -224,8 +231,16 @@ class CameraRuntime:
             # дёшево; нужна и форме, и проверке подмены id трекером. В повторе кадра нет — гистограмма из записи.
             hist = _replay_hist(tr.xyxy, persons) if replay else torso_hist(frame, tr.xyxy)
             post = posture(kps[tr.id], tr.xyxy) if tr.id in kps else None
+            if self.view == "auto" and table is not None and tr.id in kps:
+                self._view_n += 1
+                self._view_det += post is not None
             obs_people.append(PersonObs(tr.id, tr.xyxy, table, hist, app.get(tr.id), post, tr.id in kps))
         decisions = self.roles.update(ts, obs_people)
+        if self.view == "auto" and self._view_n >= VIEW_AUTO_MIN_OBS:
+            share = self._view_det / self._view_n
+            self.view = "overhead" if share >= VIEW_AUTO_OVERHEAD_SHARE else "angled"
+            log.info("тип камеры %s: %s (поза определилась у %.0f%% людей у столов)", self.cam.id, self.view,
+                     100 * share)
 
         # --- наблюдения по зонам
         per_zone: dict[str, dict[str, list[int]]] = {
@@ -247,7 +262,8 @@ class CameraRuntime:
                     per_zone[zid]["standing"].append(sid)
                 # «Сидит» — поза «сидит» или гость, неподвижный у стола (роль по времени, D-031/D-043), если он не
                 # нагнулся: с низкой угловой камеры сидящий и стоящий по точкам неразличимы (постановка 15.11).
-                if d.posture == "sit" or (d.role == GUEST and "dwell" in d.reasons and d.posture != "bend"):
+                if d.posture == "sit" or (self.view != "overhead" and d.role == GUEST and "dwell" in d.reasons
+                                          and d.posture != "bend"):
                     per_zone[zid]["seated"].append(sid)
         dirty = self.appearance.update(frame, ts, [t.xyxy for t in tracks] + [d.xyxy for d in persons_all],
                                        self.engine.snapshot(ts)) if self.appearance else {}

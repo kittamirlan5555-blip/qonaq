@@ -73,7 +73,7 @@ def test_full_visit_cycle():
     tl.run(15, staff=W)  # уборка
     assert tl.m.state == TableState.FREE
     cleaned = tl.of("cleaned")[0]
-    assert cleaned.payload["cleanup_time_s"] == pytest.approx(100 + 30 + 10, abs=1.5)
+    assert cleaned.payload["cleanup_time_s"] == pytest.approx(100 + 30 + 5, abs=1.5)  # D-045: clean_min_s = 5
     assert tl.types() == ["seated", "served", "staff_visit", "left", "cleaned"]
 
 
