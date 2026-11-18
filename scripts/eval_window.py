@@ -26,6 +26,8 @@ from qonaq.evalgt import CORE_TYPES, Ev, match_events  # noqa: E402
 from qonaq.events.store import EventStore  # noqa: E402
 
 TYPES = ("seated", "served", "staff_visit", "left", "cleaned")
+# D-046: допуски по типу события (по смыслу метрик: ожидание — секунды, простой стола — минуты)
+TOL_D046 = {"seated": 10.0, "served": 10.0, "staff_visit": 10.0, "left": 60.0, "cleaned": 60.0}
 
 
 def mmss(t: float) -> str:
@@ -62,17 +64,24 @@ def trap(gt: dict, e: Ev, pad: float = 15.0) -> str | None:
     return None
 
 
-def evaluate(run_dir: Path, gt_path: Path, offset: float, tol: float = 10.0) -> dict:
+def evaluate(run_dir: Path, gt_path: Path, offset: float, tol: float | dict = 10.0) -> dict:
+    tol_of = (lambda t: tol.get(t, 10.0)) if isinstance(tol, dict) else (lambda t: float(tol))  # noqa: E731
     gt = yaml.safe_load(gt_path.read_text(encoding="utf-8"))
     w0, w1 = gt["window"]
     g = [Ev(float(i["t"]), i["zone"], i["event"]) for i in gt["events"] if w0 <= float(i["t"]) <= w1]
     notes = {(float(i["t"]), i["zone"], i["event"]): i.get("note", "") for i in gt["events"]}
     sys_all, alerts, raw = load_run(run_dir, offset)
-    # события системы у границ окна: ±tol, чтобы событие на 17:58 не стало лишним к разметке на 18:03
-    s = [e for e in sys_all if e.type in TYPES and w0 - tol <= e.t <= w1 + tol and not unscored(gt, e)]
-    s_in = [e for e in s if w0 <= e.t <= w1 or any(abs(e.t - x.t) <= tol and e.zone == x.zone and e.type == x.type
-                                                     for x in g)]
-    matches, missed, extra = match_events(g, s_in, tol)
+    # события системы у границ окна: ±допуск, чтобы событие на 17:58 не стало лишним к разметке на 18:03
+    s = [e for e in sys_all if e.type in TYPES and w0 - tol_of(e.type) <= e.t <= w1 + tol_of(e.type)
+         and not unscored(gt, e)]
+    s_in = [e for e in s if w0 <= e.t <= w1 or any(abs(e.t - x.t) <= tol_of(e.type) and e.zone == x.zone
+                                                     and e.type == x.type for x in g)]
+    matches, missed, extra = [], [], []
+    for t in TYPES:  # каждый тип — со своим допуском
+        m, mi, ex = match_events([x for x in g if x.type == t], [x for x in s_in if x.type == t], tol_of(t))
+        matches += m
+        missed += mi
+        extra += ex
     rows = {}
     for t in TYPES:
         m = [(gg, ss, ss.t - gg.t) for gg, ss, _ in matches if gg.type == t]
@@ -86,7 +95,7 @@ def evaluate(run_dir: Path, gt_path: Path, offset: float, tol: float = 10.0) -> 
     al_in = [a for a in alerts if w0 <= a["t"] <= w1]
     fired_forbidden = [a for a in al_in if any(f["zone"] == a["zone"] and f["kind"] == a["kind"] for f in forb)]
     return {
-        "window": [w0, w1], "offset": offset, "tolerance_s": tol, "rows": rows,
+        "window": [w0, w1], "offset": offset, "tolerance_s": tol if isinstance(tol, dict) else float(tol), "rows": rows,
         "matches": [{"zone": a.zone, "event": a.type, "gt": a.t, "sys": round(b.t, 1), "dt": round(b.t - a.t, 1)}
                     for a, b, _ in sorted(matches, key=lambda m: m[0].t)],
         "missed": [{"zone": e.zone, "event": e.type, "t": e.t, "note": notes.get((e.t, e.zone, e.type), "")}
@@ -107,14 +116,21 @@ def evaluate(run_dir: Path, gt_path: Path, offset: float, tol: float = 10.0) -> 
 def to_md(res: dict, title: str) -> str:
     f = lambda v: "—" if v is None else str(v)  # noqa: E731
     out = [f"### {title}", "",
-           "| Событие | В разметке | Поймано | Пропущено | Лишних | Ошибка времени, с (среднее / макс) |",
-           "|---|---|---|---|---|---|"]
+           "| Событие | Допуск | В разметке | Поймано | Пропущено | Лишних | Ошибка времени, с (среднее / макс) |"
+           " При ±10 с: поймано / пропущено / лишних |",
+           "|---|---|---|---|---|---|---|---|"]
     tot = {"gt": 0, "tp": 0, "fn": 0, "fp": 0}
     for t, r in res["rows"].items():
-        out.append(f"| {t} | {r['gt']} | {r['tp']} | {r['fn']} | {r['fp']} | {f(r['mae'])} / {f(r['max'])} |")
+        tl = res["tolerance_s"].get(t, 10.0) if isinstance(res["tolerance_s"], dict) else res["tolerance_s"]
+        r10 = res.get("at_10s", {}).get(t)
+        c10 = f"{r10['tp']} / {r10['fn']} / {r10['fp']}" if r10 else "—"
+        out.append(f"| {t} | ±{tl:.0f} с | {r['gt']} | {r['tp']} | {r['fn']} | {r['fp']} |"
+                   f" {f(r['mae'])} / {f(r['max'])} | {c10} |")
         for k in tot:
             tot[k] += r[k]
-    out.append(f"| **всего** | {tot['gt']} | {tot['tp']} | {tot['fn']} | {tot['fp']} | |")
+    a10 = res.get("at_10s", {})
+    t10 = " / ".join(str(sum(v[k] for v in a10.values())) for k in ("tp", "fn", "fp")) if a10 else "—"
+    out.append(f"| **всего** | | {tot['gt']} | {tot['tp']} | {tot['fn']} | {tot['fp']} | | {t10} |")
     out += ["", "Совпало (разметка → система, Δ = система − разметка):"]
     out += [f"- {m['zone']} {m['event']}: {mmss(m['gt'])} → {mmss(m['sys'])} (Δ {m['dt']:+.0f} с)"
             for m in res["matches"]]
@@ -138,10 +154,12 @@ def main() -> int:
     ap.add_argument("run_dir")
     ap.add_argument("gt")
     ap.add_argument("--offset", type=float, default=0.0, help="начало вырезки в секундах исходного файла")
-    ap.add_argument("--tol", type=float, default=10.0)
+    ap.add_argument("--tol", type=float, default=None, help="единый допуск; по умолчанию — по типу (D-046)")
     ap.add_argument("--title", default="Сверка")
     a = ap.parse_args()
-    res = evaluate(Path(a.run_dir), Path(a.gt), a.offset, a.tol)
+    res = evaluate(Path(a.run_dir), Path(a.gt), a.offset, TOL_D046 if a.tol is None else a.tol)
+    res10 = evaluate(Path(a.run_dir), Path(a.gt), a.offset, 10.0)
+    res["at_10s"] = {t: {k: r[k] for k in ("tp", "fn", "fp")} for t, r in res10["rows"].items()}
     (Path(a.run_dir) / "eval_window.json").write_text(json.dumps(res, ensure_ascii=False, indent=1), encoding="utf-8")
     md = to_md(res, a.title)
     (Path(a.run_dir) / "eval_window.md").write_text(md + "\n", encoding="utf-8")
