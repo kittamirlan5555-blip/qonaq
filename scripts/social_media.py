@@ -788,6 +788,7 @@ class Scene:
     sub: str
     xfade: bool = True
     card_s: float = 0.0
+    cap_fade: bool = True  # False — заголовок сразу с первого кадра сцены (без проявления)
 
     @property
     def dur(self) -> float:
@@ -797,12 +798,16 @@ class Scene:
 def scenes() -> list[Scene]:
     hv, hh = (640, 180, 1360, 1080), (240, 135, 1920, 1080)
     bv, bh = (1200, 180, 1920, 1080), (300, 169, 1920, 1080)
+    served = next(e["t"] for e in HOGS.events if e["type"] == "served" and e["zone_id"] == "T01" and e["t"] > 1577)
     return [
         Scene(HOGS, 1573, 1581, 2, hv, hh, "Гости садятся за стол", "система видит посадку и запускает таймер"),
         Scene(HOGS, 1581, 1648, 8, hv, hh, "Таймер ожидания официанта", "сколько стол ждёт — видно в секундах",
               xfade=False),
-        Scene(HOGS, 1648, 1662, 2, hv, hh, "Официант подошёл", "статус стола сменился, время подхода записано",
-              xfade=False),
+        # заголовок «Официант подошёл» — ровно с кадра, где статус стал синим (событие served в журнале)
+        Scene(HOGS, 1648, served, 2, hv, hh, "Таймер ожидания официанта", "сколько стол ждёт — видно в секундах",
+              xfade=False, cap_fade=False),
+        Scene(HOGS, served, 1662, 2, hv, hh, "Официант подошёл", "статус стола сменился, время подхода записано",
+              xfade=False, cap_fade=False),
         Scene(BEACH, 924, 938, 2, bv, bh, "Другой бар: к столу 4 не подходят 3 минуты",
               "администратору уходит уведомление"),
         Scene(None, 0, 0, 1, (), (), "", "", card_s=3.6),
@@ -909,7 +914,7 @@ def vertical(s: Scene, img, t, ta, when, text, local_t) -> np.ndarray:
     v = View(s.vcrop, (0, 330, 1080, 1350))
     paste_frame(c, img, v)
     draw_zones(c, s.site, t, v, 40)
-    a = ease(local_t / 0.5)
+    a = ease(local_t / 0.5) if s.cap_fade else 1.0
     nl = len(wrap(s.title, font(58, "b"), W - 120))
     hb = nl * 58 * 1.18 + 58 * 0.18 + len(wrap(s.sub, font(31, "r"), W - 120)) * 31 * 1.3
     text_block(c, (60, int((330 - hb) / 2) + 6), s.title, s.sub, 58, 31, W - 120, alpha=a)
@@ -929,7 +934,7 @@ def horizontal(s: Scene, img, t, ta, when, text, local_t) -> np.ndarray:
     paste_frame(c, img, v)
     cap_w = max(font(46, "b").getlength(s.title), font(28, "r").getlength(s.sub)) + 80
     draw_zones(c, s.site, t, v, 34, keepout=[(36, 36, 36 + cap_w, 176), (36, 200, 436, 574)])
-    a = ease(local_t / 0.5)
+    a = ease(local_t / 0.5) if s.cap_fade else 1.0
     cap = font(46, "b")
     tw = max(cap.getlength(s.title), font(28, "r").getlength(s.sub)) + 80
     glass(c, (36, 36, 36 + tw, 176), r=30)
