@@ -102,6 +102,9 @@ class AlertThresholds(_Model):
     min_role_confidence: float = 0.6
     confident_only: bool = True
     show_site_name: bool = False  # S4: название заведения второй строкой (если у администратора их несколько)
+    # HTML-карточки с кнопками «Принял» / «Неверно» и правкой алерта, когда подошли/убрали (qonaq/alerts/feed.py);
+    # "text" — прежние текстовые сообщения
+    telegram_format: Literal["html", "text"] = "html"
     shift_summary_at: str = "23:30"  # S4: сводка смены владельцу заведения (TELEGRAM_VENUE_CHAT_ID); "" — нет
     venue_chat_env: str = "TELEGRAM_VENUE_CHAT_ID"
     no_waiter_s: float = 180.0

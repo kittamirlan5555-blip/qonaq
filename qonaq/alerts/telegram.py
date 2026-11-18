@@ -43,13 +43,35 @@ class TelegramSender:
         self.chat_id = chat_id
         self._client = client or httpx.Client(timeout=timeout)
 
-    def send(self, text: str, feedback_id: str | None = None) -> None:
+    def send(self, text: str, feedback_id: str | None = None) -> int | None:
         """feedback_id — под сообщением кнопка «Неверно» (callback `fb:<id>`, ловит FeedbackPoller)."""
         body: dict[str, Any] = {"chat_id": self.chat_id, "text": text, "disable_web_page_preview": True}
         if feedback_id:
             body["reply_markup"] = {"inline_keyboard": [[{"text": "Неверно", "callback_data": f"fb:{feedback_id}"}]]}
         r = self._client.post(self._url, json=body)
         if r.status_code != 200:
+            raise RuntimeError(f"Telegram API {r.status_code}: {r.text[:200]}")
+        return _message_id(r)
+
+    def send_html(self, html: str, markup: dict[str, Any] | None = None) -> int | None:
+        """Сообщение с разметкой HTML (жирный заголовок, курсив) и кнопками; возвращает message_id для правки."""
+        body: dict[str, Any] = {"chat_id": self.chat_id, "text": html, "parse_mode": "HTML",
+                                "disable_web_page_preview": True}
+        if markup:
+            body["reply_markup"] = markup
+        r = self._client.post(self._url, json=body)
+        if r.status_code != 200:
+            raise RuntimeError(f"Telegram API {r.status_code}: {r.text[:200]}")
+        return _message_id(r)
+
+    def edit_html(self, message_id: int, html: str, markup: dict[str, Any] | None = None) -> None:
+        """editMessageText: дописать подтверждение («Подошли через …») в уже отправленный алерт."""
+        body: dict[str, Any] = {"chat_id": self.chat_id, "message_id": message_id, "text": html,
+                                "parse_mode": "HTML", "disable_web_page_preview": True}
+        if markup:
+            body["reply_markup"] = markup
+        r = self._client.post(self._base + "editMessageText", json=body)
+        if r.status_code != 200 and "message is not modified" not in r.text:
             raise RuntimeError(f"Telegram API {r.status_code}: {r.text[:200]}")
 
     def send_photo(self, data: bytes, caption: str = "") -> None:
@@ -88,6 +110,13 @@ class TelegramSender:
         return r.json()
 
 
+def _message_id(r) -> int | None:
+    try:
+        return int(r.json()["result"]["message_id"])
+    except Exception:  # noqa: BLE001 — старый/фейковый ответ без message_id
+        return None
+
+
 def sender_from_env(chat_env: str = "TELEGRAM_CHAT_ID") -> TelegramSender | None:
     token, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get(chat_env)
     if token and chat:
@@ -99,8 +128,9 @@ class FeedbackPoller:
     """Кнопка «Неверно» под алертом → запись в таблицу feedback (пригодится калибровке, W6/W7).
     Long polling getUpdates в отдельном потоке; без вебхука и без открытых портов."""
 
-    def __init__(self, sender: TelegramSender, store, timeout_s: int = 20):
+    def __init__(self, sender: TelegramSender, store, timeout_s: int = 20, on_ack=None):
         self.sender, self.store, self.timeout_s = sender, store, timeout_s
+        self.on_ack = on_ack  # кнопка «Принял»: отметить алерт принятым (AlertDispatcher.ack)
         self._offset = 0
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -120,13 +150,20 @@ class FeedbackPoller:
         for u in res.get("result", []):
             self._offset = max(self._offset, int(u["update_id"]) + 1)
             cq = u.get("callback_query")
-            if not cq or not str(cq.get("data", "")).startswith("fb:"):
+            data = str((cq or {}).get("data", ""))
+            if not cq or not data.startswith(("fb:", "ack:")):
                 continue
-            alert_id = cq["data"][3:]
+            kind, alert_id = data.split(":", 1)
             user = (cq.get("from") or {}).get("username") or str((cq.get("from") or {}).get("id", ""))
-            self.store.add_feedback(alert_id, "wrong", source="telegram", user=user)
+            self.store.add_feedback(alert_id, "wrong" if kind == "fb" else "ack", source="telegram", user=user)
+            if kind == "ack" and self.on_ack is not None:
+                try:
+                    self.on_ack(alert_id, user)
+                except Exception as e:  # noqa: BLE001
+                    log.debug("«Принял»: %s", e)
             try:
-                self.sender.call("answerCallbackQuery", callback_query_id=cq["id"], text="Записано: неверно. Спасибо!")
+                self.sender.call("answerCallbackQuery", callback_query_id=cq["id"],
+                                 text="Записано: неверно. Спасибо!" if kind == "fb" else "Принято")
             except Exception as e:  # noqa: BLE001
                 log.debug("answerCallbackQuery: %s", e)
             n += 1
@@ -216,9 +253,18 @@ class AlertDispatcher:
     def __init__(self, sender: Sender | None = None, site_name: str = "", max_queue: int = 500,
                  retry_base_s: float = 2.0, retry_max_s: float = 120.0, sleep=None,
                  min_confidence: float = 0.6, confident_only: bool = True, store=None,
-                 tz: str | None = None, late_after_s: float = 120.0, max_age_s: float = 1800.0, clock=time.time):
+                 tz: str | None = None, late_after_s: float = 120.0, max_age_s: float = 1800.0, clock=time.time,
+                 html: bool = False):
         self.sender = sender
         self.tz = tz
+        # HTML-карточки с кнопками и правкой (qonaq/alerts/feed.py) — если отправитель умеет send_html/edit_html
+        self.html = bool(html and sender is not None and hasattr(sender, "send_html"))
+        self._mids: dict[tuple, int] = {}
+        self._feed = None
+        if self.html:
+            from qonaq.alerts.feed import TelegramFeed
+
+            self._feed = TelegramFeed(self._clock_label, id_of=self._feed_id)
         # Очередь при обрыве сети (S4): позже late_after_s — с пометкой «с опозданием»; старше max_age_s — не шлём
         # (через полчаса «гости ждут» уже бесполезно и только раздражает), но пишем в журнал.
         self.late_after_s = late_after_s
@@ -245,14 +291,51 @@ class AlertDispatcher:
         else:
             log.info("Telegram не настроен (нет TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID) — алерты только в лог и панель")
 
+    def _clock_label(self, ts: float) -> str:
+        from qonaq.strings import clock
+
+        return clock(ts, self.tz)
+
+    @staticmethod
+    def _feed_id(d: dict) -> str:
+        import hashlib
+
+        return hashlib.blake2b(repr((d["camera_id"], d["zone_id"], d["kind"], d["sid"])).encode(),
+                               digest_size=8).hexdigest()
+
+    def ack(self, alert_id: str, user: str = "") -> None:
+        """Кнопка «Принял»: строка «Принял» в алерте, кнопка «Принял» убирается."""
+        if self._feed is None:
+            return
+        from qonaq.alerts.feed import Action, keyboard
+
+        for key, a in self._feed.open.items():
+            if a["alert_id"] == alert_id and not a["acked"]:
+                a["acked"] = True
+                a["html"] += "\n<i>Принял" + (f" @{user}" if user and not user.isdigit() else "") + "</i>"
+                self._q.put_nowait(("act", Action("edit", key, a["html"], keyboard(alert_id, acked=True),
+                                                  self._clock())))
+
+    def _handle_html(self, events: list[Event], held: set[tuple]) -> None:
+        evs = [e for e in events if not (e.type == "alert" and alert_key(e) in held)]
+        for act in self._feed.handle(evs):
+            try:
+                self._q.put_nowait(("act", act))
+            except queue.Full:
+                log.error("очередь алертов переполнена — не отправлено: %s", act.html)
+
     def handle(self, events: list[Event], zone_titles: dict[str, str] | None = None) -> list[AlertRecord]:
         """Принимает события, выбирает алерты, дедуплицирует, ставит в очередь отправки."""
         out = []
+        held: set[tuple] = set()
+        if self._feed is not None and zone_titles:
+            self._feed.titles.update(zone_titles)
         for e in events:
             if e.type != "alert":
                 continue
             key = alert_key(e)
             if key in self._seen:
+                held.add(key)  # повтор того же алерта — второй раз не шлём
                 continue
             self._seen.add(key)
             conf = is_confident(e, self.min_confidence)
@@ -266,12 +349,17 @@ class AlertDispatcher:
             log.warning("АЛЕРТ %s%s", rec.text, "" if to_tg else " (неуверенный — только в отчёт)")
             if not to_tg:
                 self.held_back += 1
+                held.add(key)
             self._log(rec)
-            if self.sender is not None and to_tg:
+            if self.sender is not None and to_tg and not self.html:
                 try:
                     self._q.put_nowait(rec)
                 except queue.Full:
                     log.error("очередь алертов переполнена — алерт не отправлен: %s", rec.text)
+        if self._feed is not None:
+            self._handle_html(events, held)
+            for rec in out:
+                rec.sent = rec.confident or not self.confident_only
         return out
 
     def _log(self, rec: AlertRecord) -> None:
@@ -288,6 +376,9 @@ class AlertDispatcher:
             try:
                 rec = self._q.get(timeout=0.2)
             except queue.Empty:
+                continue
+            if isinstance(rec, tuple) and rec[0] == "act":
+                self._run_action(rec[1])
                 continue
             delay = self._retry_base
             while not self._stop.is_set():
@@ -311,6 +402,27 @@ class AlertDispatcher:
                     log.warning("алерт не отправлен (%s), повтор через %.0f с", ex, delay)
                     self._sleep(delay)
                     delay = min(delay * 2, self._retry_max)
+
+    def _run_action(self, act) -> None:
+        """HTML-действие: send — новое сообщение (запомнить message_id), edit — правка исходного алерта."""
+        delay = self._retry_base
+        while not self._stop.is_set():
+            try:
+                if act.op == "send":
+                    mid = self.sender.send_html(act.html, act.markup)
+                    if mid is not None:
+                        self._mids[act.key] = mid
+                    self.sent_count += 1
+                elif act.key in self._mids:
+                    self.sender.edit_html(self._mids[act.key], act.html, act.markup)
+                return
+            except Exception as ex:  # noqa: BLE001
+                self.failed_attempts += 1
+                if self._clock() - act.ts > self.max_age_s:
+                    return
+                log.warning("Telegram: %s не выполнено (%s), повтор через %.0f с", act.op, ex, delay)
+                self._sleep(delay)
+                delay = min(delay * 2, self._retry_max)
 
     def pending(self) -> int:
         return self._q.qsize()

@@ -50,14 +50,17 @@ class FakeTelegramState:
             self.messages.append(m)
             return m
 
-    def press(self, message_id: int | None = None, alert_id: str | None = None, user: str = "admin") -> dict:
+    def press(self, message_id: int | None = None, alert_id: str | None = None, user: str = "admin",
+              button: str = "fb") -> dict:
+        """Нажать кнопку под сообщением: button — «fb» (Неверно) или «ack» (Принял)."""
         with self.lock:
             msg = None
             for m in reversed(self.messages):
                 buttons = ((m.get("reply_markup") or {}).get("inline_keyboard") or [[]])[0]
-                data = buttons[0].get("callback_data", "") if buttons else ""
+                datas = [b.get("callback_data", "") for b in buttons]
+                data = next((d for d in datas if d.startswith(f"{button}:")), datas[0] if datas else "")
                 by_id = message_id is not None and m["message_id"] == message_id
-                if by_id or (alert_id and data == f"fb:{alert_id}"):
+                if by_id or (alert_id and data == f"{button}:{alert_id}"):
                     msg = (m, data)
                     break
             if msg is None:
@@ -155,6 +158,15 @@ def create_fake_app(state: FakeTelegramState | None = None):
             caps = " | ".join(x.get("caption", "") for x in media)
             m = st.add_message(method, b["chat_id"], caps, photos=len(media))
             return ok([{"message_id": m["message_id"], "chat": {"id": b["chat_id"]}}])
+        if method == "editMessageText":
+            with st.lock:
+                m = next((x for x in st.messages if x["message_id"] == int(b.get("message_id") or 0)
+                          and x["chat_id"] == str(b.get("chat_id"))), None)
+                if m is None:
+                    return err(400, "Bad Request: message to edit not found")
+                m["text"], m["reply_markup"] = b.get("text", ""), b.get("reply_markup")
+                m["edits"] = m.get("edits", 0) + 1
+            return ok({"message_id": m["message_id"], "chat": {"id": m["chat_id"]}, "text": m["text"]})
         if method == "answerCallbackQuery":
             with st.lock:
                 st.answered.append({"callback_query_id": b.get("callback_query_id"), "text": b.get("text", "")})

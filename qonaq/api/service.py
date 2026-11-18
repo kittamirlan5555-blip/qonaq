@@ -42,7 +42,8 @@ class LiveService:
         self.alerts = AlertDispatcher(sender if sender is not None else (sender_from_env() if use_env_sender else None),
                                       site_name=site.name if site.alerts.show_site_name else "",
                                       tz=site.business.timezone, min_confidence=site.alerts.min_role_confidence,
-                                      confident_only=site.alerts.confident_only, store=self.store)
+                                      confident_only=site.alerts.confident_only, store=self.store,
+                                      html=site.alerts.telegram_format == "html")
         # W7: монитор здоровья + сводка владельцу системы (отдельный чат)
         from qonaq.health.daily import FrameSampler
         from qonaq.health.monitor import HealthConfig, HealthMonitor
@@ -278,7 +279,7 @@ class LiveService:
         from qonaq.alerts.telegram import FeedbackPoller, TelegramSender
 
         if isinstance(self.alerts.sender, TelegramSender):
-            self._feedback = FeedbackPoller(self.alerts.sender, self.store).start()
+            self._feedback = FeedbackPoller(self.alerts.sender, self.store, on_ack=self.alerts.ack).start()
         return self
 
     def stop(self) -> None:
