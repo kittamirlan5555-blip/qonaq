@@ -2,6 +2,37 @@ SPRINT4 В РАБОТЕ (статус задач — `SPRINT4.md`; SPRINT3 вы�
 
 # PROGRESS — Qonaq Vision
 
+## ⏸ ПАУЗА этапа 3 (18.11.2026) — бильярдный учёт, выезд, запись NVR
+
+Остановлено по просьбе владельца ради ролика v2. Сделано и закоммичено:
+- **Учёт столов по видео** — `qonaq/billiard/ledger.py`, `python -m qonaq billiard ledger --events … --site …
+  [--date …] [--video-start …] [--send]`. Что умеет:
+  - рабочий день с `billiard.day_start_h`: ночь относится ко вчерашнему дню;
+  - деньги поминутно по `billiard.tariff_bands` (вечер, ночь, выходные, по столам), учтены `bill_rounding_min` и
+    `bill_min_minutes`;
+  - загрузка: минуты игры в часы работы, только когда система видела зал (heartbeat);
+  - отдельной строкой: простой, игра вне часов работы, ещё идущая игра;
+  - сетка минут по часам и пик;
+  - выгрузки: `ledger.html`, `ledger_sessions.csv` и `ledger_tables.csv` (Excel: `;`, BOM), `ledger_telegram.txt`.
+
+  Тесты — `tests/test_billiard_ledger.py` (11). Новые поля конфига — `TariffBand` в `qonaq/config.py`.
+- **`docs/SITE_SURVEY.md`** — выезд на объект: разговор (тарифы и часы → конфиг), регистратор и доступ, проверка
+  каждого стола, бар, сеть, запись, что делать дома, лист осмотра для печати.
+- **`scripts/record_nvr.py`** — запись каналов NVR по RTSP. Режимы:
+  - `--probe`: каналы, кадр и разрешение каждого;
+  - `--minutes N`;
+  - `--schedule 18:00-02:00 --days 3`.
+
+  Как пишет: куски ffmpeg `-c copy`, переподключение при обрыве, стоп при нехватке места, мягкая остановка («q» —
+  кусок дописывается), пароль скрыт в логах. Тесты — `tests/test_record_nvr.py` (6, на файле вместо RTSP).
+
+**Где остановился / что осталось:**
+1. Прогон `record_nvr.py --probe` и `--minutes 1` на эмуляторе регистратора (`scripts/emulate_cameras.py`,
+   с обрывом `--outage-at`) — начат, прерван, результата нет.
+2. Прогон `billiard ledger` на синтетическом вечере (`configs/synth_billiard/evening.yaml --run`) — посмотреть
+   html глазами.
+3. Добавить в `docs/billiard/RECONCILE.md` и `configs/sites/billiard_example.yaml` пример `tariff_bands`.
+
 ## Итог D-046 (18.11.2026) — СТОП: дальше без новых правок логики под эти записи (EVAL §29)
 
 **Сделано:**

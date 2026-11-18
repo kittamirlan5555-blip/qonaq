@@ -123,6 +123,20 @@ class ClinicThresholds(_Model):
     dropout_tolerance_s: float = 5.0
 
 
+class TariffBand(_Model):
+    """Тариф по времени суток (учёт столов, qonaq/billiard/ledger.py): «после 18:00 — 3000 ₸/ч», «в выходные — …».
+
+    start/end — местное время ЧЧ:ММ; end ≤ start — через полночь. weekdays — 1 (пн) … 7 (вс) по дню НАЧАЛА полосы
+    (пятничная ночь до 02:00 — пятница); пусто — каждый день. tables — id столов; пусто — все столы.
+    Первая подходящая полоса в списке побеждает; ни одна не подошла — тариф стола (tariffs / tariff_per_hour)."""
+
+    start: str = Field(pattern=r"^\d{1,2}:\d{2}$")
+    end: str = Field(pattern=r"^\d{1,2}:\d{2}$")
+    per_hour: float = Field(ge=0)
+    weekdays: list[int] = Field(default_factory=list)
+    tables: list[str] = Field(default_factory=list)
+
+
 class BilliardThresholds(_Model):
     """Профиль `billiard` (SPRINT3 B2): стол в игре — по движению мелких объектов на сукне, не по людям рядом.
 
@@ -166,6 +180,12 @@ class BilliardThresholds(_Model):
     lamp_on_luma: float = 60.0  # яркость сукна (0..255) выше — лампа над столом горит (если нет эталона)
     lamp_ratio: float = 0.55  # или: яркость ≥ доли эталона «лампа горит»
     covered_felt_frac: float = 0.45  # доля пикселей цвета сукна ниже — стол накрыт/закрыт
+
+    # Учёт столов (qonaq/billiard/ledger.py): рабочий день, тарифы по времени, как клуб берёт деньги
+    day_start_h: int = Field(6, ge=0, le=12)  # рабочий день — с этого часа до него же назавтра (ночь — вчерашняя)
+    tariff_bands: list[TariffBand] = Field(default_factory=list)
+    bill_rounding_min: float = Field(0.0, ge=0)  # клуб округляет сессию вверх до N минут (0 — поминутно)
+    bill_min_minutes: float = Field(0.0, ge=0)  # минимальная оплата сессии, мин
 
     def tariff(self, zone_id: str) -> float:
         return float(self.tariffs.get(zone_id, self.tariff_per_hour))
