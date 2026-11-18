@@ -71,8 +71,9 @@ def font(size: float, w: str = "sb") -> ImageFont.FreeTypeFont:
     return _fcache[key]
 
 
-def mmss(s: float) -> str:
-    s = max(0, int(s + 0.5))
+def mmss(s: float, floor: bool = False) -> str:
+    """ММ:СС; floor — для идущих таймеров (как секундомер: 179,9 с — ещё 02:59, цвет и цифры не расходятся)."""
+    s = max(0, int(s) if floor else int(s + 0.5))
     return f"{s // 60:02d}:{s % 60:02d}"
 
 
@@ -185,10 +186,10 @@ def style_of(st: dict) -> tuple[tuple[int, int, int], str]:
     if s == "FREE":
         return GREEN, "свободен"
     if s == "SEATED_WAITING":
-        return (RED if st["timer"] >= RED_AFTER_S else YELLOW), f"ждут {mmss(st['timer'])}"
+        return (RED if st["timer"] >= RED_AFTER_S else YELLOW), f"ждут {mmss(st['timer'], floor=True)}"
     if s == "SERVED":
         return BLUE, "обслуживают"
-    return ORANGE, f"не убран {mmss(st['timer'])}"
+    return ORANGE, f"не убран {mmss(st['timer'], floor=True)}"
 
 
 def hall(site: Site, t: float) -> dict:
@@ -403,11 +404,14 @@ def fit_crop(cx: float, cy: float, w: float, aspect: float, W=1920, H=1080) -> t
     return (x1, y1, x1 + w, y1 + h)
 
 
-def paste_frame(canvas: Image.Image, img: np.ndarray, v: View, radius: int = 0) -> None:
+def paste_frame(canvas: Image.Image, img: np.ndarray, v: View, radius: int = 0, sharpen: bool = False) -> None:
     x1, y1, x2, y2 = v.crop
     x, y, w, h = v.dst
     roi = img[int(round(y1)):int(round(y2)), int(round(x1)):int(round(x2))]
-    roi = cv2.resize(roi, (w, h), interpolation=cv2.INTER_CUBIC if w > roi.shape[1] else cv2.INTER_AREA)
+    up = w > roi.shape[1]
+    roi = cv2.resize(roi, (w, h), interpolation=cv2.INTER_LANCZOS4 if up else cv2.INTER_AREA)
+    if sharpen and up:  # увеличенный кадр мягкий — лёгкая нерезкая маска, чтобы картинка читалась чётче
+        roi = cv2.addWeighted(roi, 1.45, cv2.GaussianBlur(roi, (0, 0), 1.6), -0.45, 0)
     pim = Image.fromarray(cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)).convert("RGBA")
     canvas.paste(pim, (x, y), rounded_mask((w, h), radius) if radius else None)
 
@@ -441,8 +445,17 @@ def draw_zones(canvas: Image.Image, site: Site, t: float, v: View, label_px: int
         label(canvas, (lx, ly), zid, st, label_px, (x + 16, y + 16, x + w - 16, y + h - 16), keepout)
 
 
+STYLE = {"caps": False, "sub_px": 0}  # ролик v2: подписи с заглавной, вторая строка подписи не мельче sub_px
+
+
+def cap1(s: str) -> str:
+    return s[:1].upper() + s[1:]
+
+
 def label(canvas: Image.Image, at, zid: str, st: dict, px: int, bounds, keepout=()) -> None:
     col, word = style_of(st)
+    if STYLE["caps"]:
+        word = cap1(word)
     pulse = st.get("pulse")
     sc = 1.0 + (0.16 * math.sin(math.pi * pulse) if pulse is not None else 0.0)
     f = font(px * sc, "b")
@@ -468,12 +481,15 @@ def label(canvas: Image.Image, at, zid: str, st: dict, px: int, bounds, keepout=
     if x1 + ph / 2 < cx < x1 + pw - ph / 2:
         d.polygon(tip, fill=(*col, 255))
     if st.get("sub"):
-        fs = font(px * 0.72, "sb")
-        sw = fs.getlength(st["sub"]) + px * 1.0
+        sub = cap1(st["sub"]) if STYLE["caps"] else st["sub"]
+        sp = max(px * 0.72, STYLE["sub_px"])
+        fs = font(sp, "sb")
+        sw = fs.getlength(sub) + sp * 1.3
+        sh = sp * 1.55
         sx = min(max(bounds[0], cx - sw / 2), bounds[2] - sw)
-        sy1 = y1 - px * 1.35
-        shadowed(canvas, (sx, sy1, sx + sw, sy1 + px * 1.12), int(px * 0.56), (255, 255, 255, 240), blur=8, offset=3)
-        d.text((sx + sw / 2, sy1 + px * 0.56), st["sub"], font=fs, fill=INK, anchor="mm")
+        sy1 = y1 - sh - px * 0.25
+        shadowed(canvas, (sx, sy1, sx + sw, sy1 + sh), int(sh / 2), (255, 255, 255, 240), blur=8, offset=3)
+        d.text((sx + sw / 2, sy1 + sh / 2), sub, font=fs, fill=INK, anchor="mm")
 
 
 def panel_row(canvas: Image.Image, site: Site, t: float, box, title_px: int = 30) -> None:
@@ -879,7 +895,7 @@ def ffmpeg(path: Path, w: int, h: int) -> subprocess.Popen:
     except ImportError:
         pass
     return subprocess.Popen([exe, "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{w}x{h}",
-                             "-r", str(FPS), "-i", "-", "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+                             "-r", str(FPS), "-i", "-", "-c:v", "libx264", "-preset", "slow", "-crf", "16",
                              "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(path)], stdin=subprocess.PIPE)
 
 
@@ -949,9 +965,347 @@ def horizontal(s: Scene, img, t, ta, when, text, local_t) -> np.ndarray:
     return np.array(c.convert("RGB"))
 
 
+# ------------------------------------------------------------------ ролик v2 (reel_v2_*): крупно, с заглавной, ≥36 px
+@dataclass
+class Scene2:
+    kind: str  # video | summary | pilot
+    site: Site | None = None
+    t0: float = 0.0
+    t1: float = 0.0
+    speed: float = 1.0
+    vcrop: tuple = ()
+    hcrop: tuple = ()
+    title: str = ""
+    xfade: bool = True
+    cap_fade: bool = True
+    dur_s: float = 0.0
+    toast_at: float | None = None  # время журнала, когда пришло уведомление (сцена идёт в ×1)
+
+    @property
+    def dur(self) -> float:
+        return self.dur_s or (self.t1 - self.t0) / self.speed
+
+
+TOAST_IN, TOAST_HOLD, TOAST_OUT = 0.5, 3.8, 0.6  # уведомление держится ≥ 3,5 с в обычной скорости
+
+
+def scenes2() -> list[Scene2]:
+    hv, hh = (640, 180, 1360, 1080), (240, 135, 1920, 1080)
+    bv, bh = (1200, 180, 1920, 1080), (300, 169, 1920, 1080)
+    served = next(e["t"] for e in HOGS.events if e["type"] == "served" and e["zone_id"] == "T01" and e["t"] > 1577)
+    alert = next(e["t"] for e in BEACH.events if e["type"] == "alert" and e["zone_id"] == "B4")
+    toast_s = TOAST_IN + TOAST_HOLD + TOAST_OUT
+    return [
+        Scene2("video", HOGS, 1574, 1580, 2, hv, hh, "Гости садятся за стол"),
+        Scene2("video", HOGS, 1580, 1649, 8, hv, hh, "Таймер ожидания пошёл", xfade=False),
+        # «Официант подошёл» — ровно с кадра, где статус стал синим (событие served в журнале)
+        Scene2("video", HOGS, 1649, served, 2, hv, hh, "Таймер ожидания пошёл", xfade=False, cap_fade=False),
+        Scene2("video", HOGS, served, served + 8, 2, hv, hh, "Официант подошёл к столу", xfade=False,
+               cap_fade=False),
+        Scene2("video", BEACH, alert - 8, alert, 2, bv, bh, "Другой бар: ждут 3 минуты"),
+        # уведомление — в обычной скорости, без ускорения
+        Scene2("video", BEACH, alert, alert + toast_s + 0.3, 1, bv, bh, "Другой бар: ждут 3 минуты", xfade=False,
+               cap_fade=False, toast_at=alert),
+        Scene2("summary", dur_s=5.5),
+        Scene2("pilot", dur_s=3.0),
+    ]
+
+
+def toast_state(s: Scene2, t: float) -> tuple[float, float] | None:
+    """(прозрачность, сдвиг вверх 0..1) уведомления или None."""
+    if s.toast_at is None or t < s.toast_at:
+        return None
+    x = t - s.toast_at
+    if x < TOAST_IN:
+        k = ease(x / TOAST_IN)
+        return k, 1 - k
+    if x < TOAST_IN + TOAST_HOLD:
+        return 1.0, 0.0
+    k = ease((x - TOAST_IN - TOAST_HOLD) / TOAST_OUT)
+    return (1 - k, k) if k < 1 else None
+
+
+def toast2(canvas: Image.Image, x: int, y: int, width: int, text: str, px: int, alpha: float, lift: float) -> None:
+    f = font(px, "r")
+    lines = wrap(text, f, width - px * 4.3 - px * 1.6)
+    hgt = int(px * 3.0 + len(lines) * px * 1.32)
+    y = int(y - lift * (hgt * 0.6 + 60))
+    layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    shadowed(layer, (x, y, x + width, y + hgt), int(px * 1.0), (250, 250, 252, 250), blur=20, offset=10, shadow_a=150)
+    plane_icon(layer, (x + px * 1.85, y + px * 1.85), px * 1.05)
+    d = ImageDraw.Draw(layer)
+    tx = x + px * 3.5
+    d.text((tx, y + px * 0.7), "Бот зала", font=font(px * 1.02, "b"), fill=INK, anchor="lt")
+    d.text((x + width - px * 0.9, y + px * 0.75), "Сейчас", font=font(px, "r"), fill=(120, 125, 135), anchor="rt")
+    ly = y + px * 2.1
+    for i, ln in enumerate(lines):
+        if i == 0:
+            d.text((tx, ly - px * 0.08), "⚠️", font=font(px * 0.95, "emoji"), embedded_color=True, anchor="lt")
+            d.text((tx + px * 1.35, ly), ln, font=f, fill=(30, 33, 40), anchor="lt")
+        else:
+            d.text((tx, ly), ln, font=f, fill=(30, 33, 40), anchor="lt")
+        ly += px * 1.32
+    if alpha < 1:
+        a = np.array(layer.getchannel("A"), np.float32) * alpha
+        layer.putalpha(Image.fromarray(a.astype(np.uint8)))
+    canvas.alpha_composite(layer)
+
+
+def wrap_bal(text: str, f, width: float) -> list[str]:
+    """Одна строка, если влезает; иначе две строки примерно равной длины (без «висящего» слова)."""
+    if f.getlength(text) <= width:
+        return [text]
+    w = text.split()
+    best = None
+    for i in range(1, len(w)):
+        a, b = " ".join(w[:i]), " ".join(w[i:])
+        m = max(f.getlength(a), f.getlength(b))
+        if m <= width and (best is None or m < best[0]):
+            best = (m, [a, b])
+    return best[1] if best else wrap(text, f, width)
+
+
+def title2(canvas: Image.Image, xy, text: str, px: int, width: float, alpha: float = 1.0, anchor_mid: bool = True,
+           box_h: float = 0, min_px: int = 60) -> None:
+    lay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(lay)
+    while px > min_px and font(px, "k").getlength(text) > width:
+        px -= 2
+    lines = wrap_bal(text, font(px, "k"), width)
+    x, y = xy
+    if anchor_mid:
+        y = y + (box_h - len(lines) * px * 1.18 + px * 0.06) / 2
+    for ln in lines:
+        d.text((x, y), ln, font=font(px, "k"), fill=(255, 255, 255, int(255 * alpha)), anchor="lt")
+        y += px * 1.18
+    canvas.alpha_composite(lay)
+
+
+def panel_grid(canvas: Image.Image, site: Site, t: float, box, px: int = 38) -> None:
+    """«Зал сейчас» 2×2: точка, подпись, число — крупно (вертикальный ролик)."""
+    h = hall(site, t)
+    glass(canvas, box, r=34)
+    x1, y1, x2, y2 = box
+    d = ImageDraw.Draw(canvas)
+    d.text((x1 + 32, y1 + 22), "Зал сейчас", font=font(px * 1.1, "b"), fill=(255, 255, 255), anchor="lt")
+    items = [("Занято", h["occupied"], BLUE), ("Ждут официанта", h["waiting"], YELLOW),
+             ("Не убрано", h["dirty"], ORANGE), ("Свободно", h["free"], GREEN)]
+    cw = (x2 - x1 - 64 - 40) / 2
+    top = y1 + 22 + px * 1.55
+    rh = (y2 - 18 - top) / 2
+    for i, (name, n, col) in enumerate(items):
+        cx = x1 + 32 + (i % 2) * (cw + 40)
+        cy = top + (i // 2) * rh + rh / 2
+        r = px * 0.3
+        d.ellipse((cx, cy - r, cx + 2 * r, cy + r), fill=col)
+        d.text((cx + 2 * r + 16, cy), name, font=font(px, "sb"), fill=(228, 232, 238), anchor="lm")
+        d.text((cx + cw, cy), str(n), font=font(px * 1.35, "k"), fill=(255, 255, 255), anchor="rm")
+
+
+def panel_col2(canvas: Image.Image, site: Site, t: float, box, px: int = 34) -> None:
+    h = hall(site, t)
+    glass(canvas, box, r=32)
+    x1, y1, x2, y2 = box
+    d = ImageDraw.Draw(canvas)
+    d.text((x1 + 30, y1 + 26), "Зал сейчас", font=font(px * 1.15, "b"), fill=(255, 255, 255), anchor="lt")
+    items = [("Занято", h["occupied"], BLUE), ("Ждут официанта", h["waiting"], YELLOW),
+             ("Не убрано", h["dirty"], ORANGE), ("Свободно", h["free"], GREEN)]
+    for i, (name, n, col) in enumerate(items):
+        ry = y1 + 26 + px * 2.45 + i * px * 1.75
+        r = px * 0.3
+        d.ellipse((x1 + 30, ry - r, x1 + 30 + 2 * r, ry + r), fill=col)
+        d.text((x1 + 46 + 2 * r, ry), name, font=font(px, "sb"), fill=(228, 232, 238), anchor="lm")
+        d.text((x2 - 30, ry), str(n), font=font(px * 1.3, "k"), fill=(255, 255, 255), anchor="rm")
+
+
+def footer2(canvas: Image.Image, xy, px: int, anchor: str = "ms") -> None:
+    lay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    ImageDraw.Draw(lay).text(xy, "Демо на записи открытой трансляции", font=font(px, "r"),
+                             fill=(255, 255, 255, 150), anchor=anchor)
+    canvas.alpha_composite(lay)
+
+
+def summary_items() -> list[tuple[str, str, tuple[int, int, int]]]:
+    s = summary()
+    return [(str(s["seated"]), "Посадки за столы", YELLOW),
+            (mmss(s["resp"]).lstrip("0"), "Ждали официанта (стол 1)", BLUE),
+            (str(s["left"]), "Стола освободились", ORANGE),
+            (f"{s['peak']}/{s['tables']}", "Столов занято в пике", GREEN)]
+
+
+def summary_screen(size: tuple[int, int], lt: float) -> np.ndarray:
+    """Итог смены на весь экран: цифры появляются по одной (из журнала, только совпавшее с разметкой)."""
+    W, H = size
+    c = gradient(size)
+    vert = W < H
+    items = summary_items()
+    a0 = ease(lt / 0.5)
+    title2(c, (72, 170 if vert else 90), "Итог смены", 120 if vert else 104, W - 144, a0, anchor_mid=False)
+    lay = Image.new("RGBA", c.size, (0, 0, 0, 0))
+    ImageDraw.Draw(lay).text((76, (330 if vert else 222)), "30 минут записи · двор бара", font=font(44, "r"),
+                             fill=(185, 192, 204, int(255 * a0)), anchor="lt")
+    c.alpha_composite(lay)
+    for i, (big, name, col) in enumerate(items):
+        k = ease((lt - 0.6 - i * 0.6) / 0.5)
+        if k <= 0:
+            continue
+        if vert:
+            bx1, by1, bx2 = 60, 470 + i * 330, W - 60
+            by2 = by1 + 290
+        else:
+            gw = (W - 144 - 3 * 36) / 4
+            bx1, by1 = 72 + i * (gw + 36), 360
+            bx2, by2 = bx1 + gw, 900
+        dy = (1 - k) * 40
+        card = Image.new("RGBA", c.size, (0, 0, 0, 0))
+        shadowed(card, (bx1, by1 + dy, bx2, by2 + dy), 40, (28, 34, 45, 255), blur=16, offset=6)
+        d = ImageDraw.Draw(card)
+        cy = (by1 + by2) / 2 + dy
+        if vert:
+            d.rounded_rectangle((bx1 + 34, by1 + dy + 60, bx1 + 48, by2 + dy - 60), 7, fill=col)
+            d.text((bx1 + 90, cy), big, font=font(150, "k"), fill=(255, 255, 255), anchor="lm")
+            nw = max(font(150, "k").getlength(b) for b, _, _ in items)
+            lx = bx1 + 90 + nw + 44
+            lines = wrap_bal(name, font(48, "b"), bx2 - lx - 30)
+            for j, ln in enumerate(lines):
+                d.text((lx, cy + (j - (len(lines) - 1) / 2) * 60), ln, font=font(48, "b"), fill=(232, 236, 242),
+                       anchor="lm")
+        else:
+            d.rounded_rectangle((bx1 + 40, by1 + dy + 44, bx1 + 140, by1 + dy + 56), 6, fill=col)
+            d.text((bx1 + 40, by1 + dy + 230), big, font=font(150, "k"), fill=(255, 255, 255), anchor="lm")
+            for j, ln in enumerate(wrap_bal(name, font(46, "b"), bx2 - bx1 - 80)):
+                d.text((bx1 + 40, by1 + dy + 380 + j * 58), ln, font=font(46, "b"), fill=(232, 236, 242), anchor="lm")
+        if k < 1:
+            card.putalpha(Image.fromarray((np.array(card.getchannel("A"), np.float32) * k).astype(np.uint8)))
+        c.alpha_composite(card)
+    footer2(c, (W / 2, H - (40 if vert else 34)), 36 if vert else 30)
+    return np.array(c.convert("RGB"))
+
+
+def pilot_screen(size: tuple[int, int], lt: float) -> np.ndarray:
+    W, H = size
+    vert = W < H
+    c = gradient(size, (12, 18, 30), (8, 10, 16))
+    k = ease(lt / 0.5)
+    lines = ["Ищу 2–3 заведения", "в Астане и Караганде", "для бесплатного пилота"]
+    px = 96 if vert else 92
+    while max(font(px, "k").getlength(x) for x in lines) > W - (120 if vert else 360):
+        px -= 2
+    lay = Image.new("RGBA", c.size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(lay)
+    total = len(lines) * px * 1.16 + px * 0.8 + px * 0.95
+    y = (H - total) / 2 + (1 - k) * 30
+    for ln in lines:
+        d.text((W / 2, y), ln, font=font(px, "k"), fill=(255, 255, 255, int(255 * k)), anchor="mt")
+        y += px * 1.16
+    y += px * 0.8
+    k2 = ease((lt - 0.5) / 0.5)
+    d.text((W / 2, y), "Пишите в лс", font=font(px * 0.95, "b"), fill=(96, 165, 250, int(255 * k2)), anchor="mt")
+    c.alpha_composite(lay)
+    return np.array(c.convert("RGB"))
+
+
+def vertical2(s: Scene2, img, t, lt) -> np.ndarray:
+    W, H = 1080, 1920
+    c = gradient((W, H))
+    v = View(s.vcrop, (0, 230, 1080, 1350))
+    paste_frame(c, img, v, sharpen=True)
+    draw_zones(c, s.site, t, v, 46)
+    a = ease(lt / 0.45) if s.cap_fade else 1.0
+    title2(c, (60, 0), s.title, 80, W - 120, a, box_h=230)
+    if s.speed != 1:
+        badge(c, (W - 36, 230 + 1350 - 36 - 70), f"×{s.speed:g}", 44)
+    ts = toast_state(s, t)
+    if ts:
+        toast2(c, 30, 256, W - 60, alert_text_b4()[1], 38, *ts)
+    panel_grid(c, s.site, t, (30, 1600, W - 30, 1858), 40)
+    footer2(c, (W / 2, H - 16), 36)
+    return np.array(c.convert("RGB"))
+
+
+def horizontal2(s: Scene2, img, t, lt) -> np.ndarray:
+    W, H = 1920, 1080
+    c = Image.new("RGBA", (W, H), (0, 0, 0, 255))
+    v = View(s.hcrop, (0, 0, W, H))
+    paste_frame(c, img, v, sharpen=True)
+    tw = font(62, "k").getlength(s.title) + 90
+    keep = [(36, 36, 36 + tw, 160), (36, 186, 486, 586)]
+    draw_zones(c, s.site, t, v, 40, keepout=keep)
+    glass(c, keep[0], r=34)
+    a = ease(lt / 0.45) if s.cap_fade else 1.0
+    title2(c, (81, 36), s.title, 62, tw, a, box_h=124)
+    panel_col2(c, s.site, t, keep[1], 36)
+    if s.speed != 1:
+        badge(c, (W - 36, 36), f"×{s.speed:g}", 44)
+    ts = toast_state(s, t)
+    if ts:
+        toast2(c, W - 36 - 860, 130, 860, alert_text_b4()[1], 36, *ts)
+    footer2(c, (W - 40, H - 24), 30, anchor="rs")
+    return np.array(c.convert("RGB"))
+
+
+def render_video2(pv: Privacy) -> list[Path]:
+    STYLE.update(caps=True, sub_px=36)
+    sc = scenes2()
+    rd = {"hogs": Reader(HOGS.video), "beach": Reader(BEACH.video)}
+    pipes = {k: ffmpeg(OUT / f"reel_v2_{w}x{h}.mp4", w, h) for k, (w, h) in
+             {"v": (1080, 1920), "h": (1920, 1080)}.items()}
+    XF = 15
+    held: list[tuple[np.ndarray, np.ndarray]] = []
+
+    def frames_of(s: Scene2):
+        for i in range(int(round(s.dur * FPS))):
+            lt = i / FPS
+            if s.kind == "summary":
+                yield summary_screen((1080, 1920), lt), summary_screen((1920, 1080), lt)
+                continue
+            if s.kind == "pilot":
+                yield pilot_screen((1080, 1920), lt), pilot_screen((1920, 1080), lt)
+                continue
+            t = s.t0 + lt * s.speed
+            f, idx = rd[s.site.key].at(t - s.site.file_offset)
+            img = pv.apply(s.site, f, (s.site.key, idx))
+            yield vertical2(s, img, t, lt), horizontal2(s, img, t, lt)
+
+    total = 0
+    for si, s in enumerate(sc):
+        gen = frames_of(s)
+        if held and s.xfade:
+            n = 0
+            for (pv_, ph_), (nv, nh) in zip(held, gen, strict=False):
+                n += 1
+                a = n / (len(held) + 1)
+                write(pipes, blend(pv_, nv, a), blend(ph_, nh, a))
+                total += 1
+        elif held:
+            for pv_, ph_ in held:
+                write(pipes, pv_, ph_)
+                total += 1
+        held, buf = [], []
+        for fv, fh in gen:
+            buf.append((fv, fh))
+            if len(buf) > XF:
+                write(pipes, *buf.pop(0))
+                total += 1
+        if si == len(sc) - 1:
+            for fv, fh in buf:
+                write(pipes, fv, fh)
+                total += 1
+        else:
+            held = buf
+        print(f"v2: сцена {si + 1}/{len(sc)} готова", flush=True)
+    paths = []
+    for p in pipes.values():
+        p.stdin.close()
+        p.wait()
+        paths.append(Path(p.args[-1]))
+    print(f"v2: {total} кадров, {total / FPS:.1f} с")
+    return paths
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--only", choices=["slides", "video"])
+    ap.add_argument("--only", choices=["slides", "video", "video2"])
     a = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")
     HOGS.load()
@@ -959,8 +1313,11 @@ def main() -> int:
     pv = Privacy()
     if a.only != "video":
         slides(pv)
-    if a.only != "slides":
+    if a.only == "video":
         for p in render_video(pv):
+            print(p)
+    if a.only in (None, "video2"):
+        for p in render_video2(pv):
             print(p)
     return 0
 

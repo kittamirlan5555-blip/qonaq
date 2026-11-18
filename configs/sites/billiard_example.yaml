@@ -21,6 +21,15 @@ billiard:
   start_episodes: 3        # K: столько эпизодов движения шаров…
   start_window_s: 300      # T: …за столько секунд — игра началась
   pause_max_s: 600         # P: паузы короче не рвут сессию
+  # Учёт столов (python -m qonaq billiard ledger, docs/SITE_SURVEY.md §1): рабочий день, тарифы по времени, как
+  # клуб берёт деньги. Первая подходящая полоса побеждает; нет подходящей — тариф стола выше.
+  day_start_h: 6           # рабочий день 06:00–06:00: игра в 01:00 — вчерашняя смена
+  tariff_bands:
+    - {start: "18:00", end: "02:00", per_hour: 4500, weekdays: [5, 6], tables: [B5]}   # VIP в пт/сб вечером
+    - {start: "18:00", end: "02:00", per_hour: 3000, weekdays: [5, 6]}                 # остальные в пт/сб вечером
+    - {start: "18:00", end: "02:00", per_hour: 2800}                                   # вечер в будни
+  bill_rounding_min: 5     # клуб округляет сессию вверх до 5 минут
+  bill_min_minutes: 30     # минимальная оплата — полчаса
 business:
   open_hours: "12:00-04:00"
   timezone: Asia/Almaty
