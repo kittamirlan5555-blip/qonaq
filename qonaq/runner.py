@@ -47,6 +47,12 @@ def process_file(video: str | Path, site: SiteConfig | None = None, out: str | P
     """
     video = Path(video)
     base_given = site is not None and bool(site.cameras)
+    if base_given and Path(site.cameras[0].source).resolve() != video.resolve():
+        # Файл из командной строки главнее источника камеры в --site: раньше он молча игнорировался, и прогон
+        # «вырезки» на деле шёл по исходному файлу из конфига.
+        log.warning("run-file: видео %s вместо источника камеры из конфига (%s)", video, site.cameras[0].source)
+        site = site.model_copy(deep=True)
+        site.cameras[0].source = str(video)
     if not base_given:
         keep = site
         site = site_for_file(video, site)

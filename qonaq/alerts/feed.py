@@ -208,7 +208,8 @@ def shift_report(sessions: list[dict[str, Any]], events: list[dict[str, Any]], c
         "long_wait_n": long_wait,
         "clean_mean_s": sum(s["cleanup_time_s"] for s in cleaned) / len(cleaned) if cleaned else None,
         "dirty_over_n": sum(1 for x in dirty_all if x > dirty_threshold_s),
-        "dirty_total_s": sum(dirty_all) if dirty_all else None,
+        # простой — когда он что-то добавляет к «уборке в среднем»: несколько столов или стол ещё не убран
+        "dirty_total_s": sum(dirty_all) if len(dirty_all) >= 2 or dirty_open else None,
         "peak_hour": peak,
         # «чаще всего» — только если у стола хотя бы два алерта, иначе это не закономерность
         "problem_table": (name(max(by_table, key=by_table.get))
@@ -237,7 +238,7 @@ def shift_html(r: dict[str, Any], site: str, day: str) -> str:
     if r["resp_worst"] and r["resp_n"] > 1:
         w = r["resp_worst"]
         s.append(f"Дольше всего ждали — {dur(w['s'])}, {w['table'].lower()} в {w['at']}")
-    if r["resp_n"] and r["long_wait_n"]:
+    if r["long_wait_n"]:
         s.append(f"Ждали дольше 3 мин — {times(r['long_wait_n'])}")
     sec.append(("Обслуживание", s))
     t = []
